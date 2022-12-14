@@ -1,0 +1,14 @@
+actual                                              corregir por        estado
+
+profundidad:43193.000                               no se (revisar)     hecho
+Peces_CI-CIMAR ACMIC 2016.xlsx tipo == brasileños   eliminar            hecho
+fecha:"1995" "1996"                                 eliminar            hecho
+metodo:buzo_errante                                 pelagico            hecho
+revisar buzos                                                           hecho
+
+falta:
+integrar los ambientes correctos,                                       hecho  
+preguntarle a juanpa sobre sitio"cocos" 
+revisar por que se pierden datasets                                     hecho
+cambiar nombres de sitios (coordenadas faltantes)
+

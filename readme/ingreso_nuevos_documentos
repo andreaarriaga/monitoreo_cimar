@@ -1,0 +1,6 @@
+Revisar:
+
+* Que el documento tenga la palabra "peces" en el nombre y la palabra "peces" en la pestaña de excel donde estan los datos de campo
+* Que los nombres de columnas no tengan caracteres diacriticos (tildes, eñes, diérisis u otros caracteres que están en español pero no en ingles)
+* Eliminar las columnas que no tienen información, es decir donde todas las celdas son NA
+* Revisar que no hayan NAs en año ni mes (idealmente tampoco en dia) y que el formato de fecha sea igual en todo el documento

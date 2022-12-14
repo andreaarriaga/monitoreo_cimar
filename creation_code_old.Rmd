@@ -1,0 +1,2349 @@
+---
+title: "Código de creación"
+author: "Andrea Arriaga-Madrigal"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    fig_caption: yes
+    number_sections: no
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+    df_print: paged
+editor_options: 
+  chunk_output_type: console
+bibliography: library.bib
+---
+  
+  &nbsp;
+  
+
+  
+  **Proyecto:**
+
+  **Objetivos:**  
+  
+-  
+
+  **Instituciones:**  Universidad de Costa Rica, CIMAR
+  
+  
+  &nbsp;
+  
+  ***
+  
+   <span style="color:blue">**Sobre el código**</span>  
+   
+  **Título:** Código de creación: Censos visuales, atributos de las especies, sitios y variables ambientales  
+  
+  **Objetivo:**  Estandarizar el formato de los datos de censos visuales subacuáticos (uvc) de cada región para concatenarlas en una única base de datos regional, crear las bases de datos complementarias requeridas para los análisis (i.e. base de datos de los atributos funcionales y taxonómicos de las especies, base de datos de sitios y variables ambientales asociadas a los censos)
+
+  **Abordaje:**  Se realizó la totalidad de la manipulación de datos utilizando rstudio. Los datos originales permanecieron tal cual fueron entregados por los colaboradores del proyecto. Se estandarizó el formato de las bases de datos de censos de peces herbívoros de cada país o región y se concatenaron posteriormente. A esta base regional se le corrigieron los nombres de los sitios, de especies y tamaños de individuos. 
+  Se generaron las bases de datos complementarias a la base de censos de peces:  
+  
+-  Una base de datos con los atributos **taxonómicos** de las especies   
+-  Una base de datos sobre **rasgos funcionales** de las especies  
+-  Una base de datos de **sitios** con sus coordenadas, ecorregión, nivel de protección y geomorfología costera  
+-  Variables ambientales **biofísicas** y de **presión antrópica**. Las biofísicas constituidas por clorofila y temperatura superficial del mar, que fueron extraídas de bases de datos satelitales. La información  global de densidad antrópica, se utilizó para calcular un índice llamado "gravity", indicador de la presión antrópica en cada sitio  
+
+  El detalle de los procesos se desglosa a continuación.  
+
+
+  
+&nbsp;
+
+***
+  
+&nbsp;
+```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
+
+# clean up
+rm(list=ls())
+
+x <- c("dplyr", "tidyr", "magrittr", "purrr", "lubridate", "stringr", "stringi", "forcats", "pbapply", "readxl", 
+       # "xlsx",
+       "ggplot2", "GGally", "gridExtra", "grid",
+       #"Cairo",
+       "extrafont", "RColorBrewer", "viridis", "DT", "raster", "rgdal", "sf", "rgeos", "cluster", "rfishbase", "taxize", "wdpar", "networkD3", "htmlwidgets", "leaflet", "warbleR", "maps", "timeperiodsR", "ncdf4")
+
+aa <- lapply(x, function(y) {
+  if(!y %in% installed.packages()[,"Package"])  {if(!y %in% c("warbleR", "Rraven")) install.packages(y) else devtools::install_github(paste0("maRce10/", y))
+  }
+  try(require(y, character.only = T), silent = T)
+})
+
+    rm(aa,
+       x)
+
+```
+
+## Censos (uvc)  
+
+Se aplicó el mismo método con pequeñas adaptaciones para la base de datos de cada país o región. A continuación se detalla las personas que aportaron datos en cada caso y el proceso que se llevó a cabo.  
+
+&nbsp;
+
+### Estandarización de formatos
+
+**Autor de los datos:** Juan José Alvarado  
+**Método:**  
+
+1. Se llaman las bases de datos y se estandariza el formato  
+    1.  Se cargan los datos de uvc   
+&emsp; **Bases de datos usadas:**  
+
+```{r call uvcs, echo = FALSE, message = FALSE, warning = FALSE}
+##-----llamando las hojas de datos de campo  para unificarlos en una sola base de datos
+# extrayendo nombres de los archivos de monitoreo
+file_names <- list.files("data_raw/monitoreo", recursive = TRUE, full.names = TRUE)
+
+# extrayendo las hojas de peces
+file_names <- file_names[grep(paste0("peces", "|", "csv"), file_names)]
+
+### excel
+file_names_excel <- list.files(path = "data_raw/monitoreo", pattern = "\\.xls", full.names = TRUE)
+
+# extrayendo las hojas de peces
+file_names_excel <- file_names_excel[grep("peces", file_names_excel)] %>% sort
+
+# viendo los nombres de las hojas de excel para extraer la de los datos de censos
+sheets <- lapply(file_names_excel, excel_sheets)
+sheets <- lapply(sheets, function(x) grep("Peces", x))
+
+## leyendo los archivos de excel y uniendolos en una lista
+files_excel_l <- list()
+
+ for (i in 1:length(file_names_excel)) {
+   if (sheets[i] != "integer(0)") {
+  files_excel_df <- read_excel(file_names_excel[i], sheet = sheets[i] %>% as.integer()) %>% as.data.frame()} else
+    files_excel_df <- read_excel(file_names_excel[i]) %>% as.data.frame()
+  
+  # uniendo las listas
+  files_excel_l[[paste0(i)]] <- files_excel_df
+   }
+
+# cambiando el nombre de las hojas dentro de la lista
+  listNames <- vector()
+  for(i in 1:length(file_names_excel)){
+name <- strsplit(file_names_excel[i], "\\/")[[1]][3]
+listNames <- rbind(name, listNames) %>% sort %>% unique
+  }
+  
+  names(files_excel_l) <- listNames
+  
+### csv
+file_names_csv <- list.files(path = "data_raw/monitoreo", pattern = "\\.csv", full.names = TRUE) %>% sort()
+
+## leyendo los archivos en csv y uniendolos en una lista
+files_csv_l <- list()
+
+ for (i in 1:length(file_names_csv)) {
+  files_csv_df <- read.csv(file_names_csv[i], header = TRUE, sep = ";") %>% as.data.frame()
+
+    # uniendo las listas
+  files_csv_l[[paste0(i)]] <- files_csv_df
+   }
+
+# cambiando el nombre de los dataframes dentro de la lista
+  listNames <- vector()
+  for(i in 1:length(file_names_csv)){
+name <- strsplit(file_names_csv[i], "\\/")[[1]][3]
+listNames <- rbind(name, listNames) %>% sort() %>% unique()
+  }
+  
+  names(files_csv_l) <- listNames
+  
+## unificando 
+fishes_l <- c(files_excel_l, files_csv_l)
+
+names(fishes_l)
+
+# limpiando objetos intermedios
+rm("file_names",
+   "file_names_csv",
+   "file_names_excel",
+   "files_csv_df",
+   "files_csv_l",
+   "files_excel_df",
+   "files_excel_l",
+   "i",
+   "listNames",
+   "name",
+   "sheets")
+```
+
+```{r uvc column names standarization, echo = FALSE, message = FALSE, warning = FALSE}
+# seleccionando las bases de datos con nombres de columnas no informativas
+incorrect_colnames <- lapply(fishes_l, function(x) grep("^cm", colnames(x))) != 0
+
+incorrect_colnames <-  incorrect_colnames[!names(incorrect_colnames) %in% names(incorrect_colnames[-incorrect_colnames %>% is.na()])] %>% names %>% as.character()
+
+# extrayendo el area_uvc para los que la tienen en la fila superior
+  area_uvc_l <- lapply(fishes_l[incorrect_colnames], function(x) {
+    area <- colnames(x)[grep("^Area", names(x)) + 2] %>% as.integer()
+     if (length(area) == 0) NA else area
+})
+  area_uvc <- do.call(rbind, area_uvc_l) %>% as.data.frame()
+names(area_uvc) <- "area_uvc"
+area_uvc$dataset <- row.names(area_uvc)
+rownames(area_uvc) <- 1:nrow(area_uvc)
+
+# asignando nombre de columnas a la fila correcta
+fishes_l_correct_colnames <- lapply(fishes_l[incorrect_colnames], function(x) {
+# seleccionando la fila que tiene los nombres de columnas
+names(x) <- x[1,] %>% as.character()
+
+# eliminando las filas que no tienen info
+x <- x[-1, ]
+
+})
+
+# corroborando que el nombre de columna se encuentra asignado en la fila correcta
+# lapply(fishes_l_correct_colnames, colnames)
+
+# pegando las bases de datos con columnas corregidas al resto
+fishes_l <- c(fishes_l_correct_colnames, fishes_l[!names(fishes_l) %in% names(fishes_l_correct_colnames)])
+
+# lapply(fishes_l, colnames)
+ 
+# eliminando columna de tamano 700
+# fishes_l$culebra_julio2021_peces$`700` %>% summary    # todas deben ser NA
+# fishes_l$isladelcoco_mayo2021_peces$`700` %>% summary # todas deben ser NA
+# fishes_l$`2021-03_gira_culebra_ peces_Andrea_Arriaga.xlsx`$`700` %>% summary # todas deben ser NA
+# fishes_l$golfodulce_enerofebrero2020_peces$`700`  %>% summary # todas deben ser NA
+
+fishes_l$culebra_julio2021_peces.xls$`700`    <- NULL
+fishes_l$isladelcoco_mayo2021_peces.xlsx$`700` <- NULL
+fishes_l$`2021-03_gira_culebra_ peces_Andrea_Arriaga.xlsx`$`700` <- NULL
+fishes_l$golfodulce_enerofebrero2020_peces.xlsx$`700` <- NULL
+
+# corrigiendo culebra_julio2021_peces.xls.NA
+fishes_l$culebra_julio2021_peces.xls$year <- 2021
+fishes_l$culebra_julio2021_peces.xls$month <- 7 %>% as.numeric()
+
+fishes_l$base_peces_vertical_hasta_julio2019.xlsx$day <- NA
+
+fishes_l$base_peces_vertical_hasta_julio2019.xlsx$date <- NULL
+# paste(fishes_l$base_peces_vertical_hasta_julio2019.xlsx$year, fishes_l$base_peces_vertical_hasta_julio2019.xlsx$month, fishes_l$base_peces_vertical_hasta_julio2019.xlsx$day, sep = "-")
+
+# limpiando objetos intermedios
+rm("area_uvc",
+   "area_uvc_l",
+   "fishes_l_correct_colnames",
+   "incorrect_colnames")
+
+```
+1.
+    1.  Se cambian los datos de formato ancho a largo  
+    1.  Se estandarizan los nombres de las columnas de interés
+    1.  Se cambian los nombres de filas para hacer referencia a la base de donde proviene
+    1.  Se generan las columnas que faltan en algunas bases de datos, i.e.  
+
+&emsp;&emsp; **locality:** NA (para los que no la reportaron)  
+&emsp;&emsp; **ID_transect:**  compuesto por la unión de "locality", "sites", "depth_m", "observer", "transect"  
+&emsp;&emsp; **year:** Se extrae de la columna de fecha de la base de datos  
+&emsp;&emsp; **month:** Se extrae de la columna de fecha de la base de datos  
+&emsp;&emsp; **day:** Se agrega "01" si no estaba reportada  
+&emsp;&emsp; **date:** Compuesto por la unión de "day"-"month"-"year"  
+&emsp;&emsp; **date_format:** Para estandarizar las fechas según el formato en que están  
+&emsp;&emsp; **type_uvc:** lineal_transect (referencia método:  DOI: 10.25145/j.SI.2021.04.04) si no está explicito en la base de datos  
+&emsp;&emsp; **area_uvc:** 50 (para Costa Rica) si no está explicito en la base de datos  
+&emsp;&emsp; **environment:** NA (para los que no la reportaron)  
+    1.  Se seleccionan las columnas de interés  
+    1.  Se quitan las filas con NA en abundancia  
+    1.  Se determina la clase correcta para las columnas  
+    1.  Se define la región  
+    1.  Se corrigen los nombres de los sitios para que coincidan en formato con los datos regionales 
+    (i.e. minúsculas, con guión bajo, sin signos diacríticos, sin errores ortográficos)  
+    1.  Se corrigen las profundidades (i.e. a los ámbitos se les asigna el valor promedio, datos no numéricos = NA)  
+ 1. Se unen las bases de datos  
+    1.  Se genera un identificador único para cada transecto  
+    1.  Se corrigen áreas que fueron confundidas con longitud del transecto  
+    1.  Se crea un identificador único para cada sitio  
+ 1. Se guardan los datos intermedios en formato .rda  
+ 
+
+```{r uvc fishes_l, echo = FALSE, message = FALSE, warning = FALSE}
+# 1.  cambiando los datos de formato ancho a largo  
+# seleccionando las bases de datos formato ancho lab chepe
+fishes_l_formatochepe <- lapply(fishes_l, function(x) grep("^45$", colnames(x))) != 0
+# && "2.5" %in% colnames(x)
+
+fishes_l_formatochepe <-  fishes_l_formatochepe[!names(fishes_l_formatochepe) %in% names(fishes_l_formatochepe[-fishes_l_formatochepe %>% is.na()])] %>% names %>% as.character()
+  
+# 1.2 cambiando los datos de abundancias de formato ancho a formato largo
+fishes_l_longformat <- lapply(fishes_l[fishes_l_formatochepe], function(x) {
+
+x %<>%
+  gather(size_cm, Value,
+         "2.5",
+         "7.5",
+         "12.5",
+         "17.5",
+         "25",
+         "35",
+         "45",
+         "55",
+         "65",
+         "75",
+         "85",
+         "95",
+         "112.5",
+         "137.5",
+         "162.5",
+         "187.5",
+         "225",
+         "275",
+         "325" )
+
+})
+
+# pegando las bases de datos con formato largo al resto
+fishes_l <- c(fishes_l_longformat, fishes_l[!names(fishes_l) %in% names(fishes_l_longformat)])
+
+# corroborando el nombre correcto de las columnas
+# lapply(fishes_l, colnames)
+
+# 1.3 estandarizando los nombres de las columnas de interés, # 1.4 cambiando nombres de filas para hacer referencia a la base de donde proviene # 1.5 generando las columnas que faltan y # 1.6 seleccionando columnas de interes
+names_fish_l <- names(fishes_l)
+
+fishes_l <-
+  lapply(names(fishes_l), function(ii){
+  x <- fishes_l[[ii]]
+
+  # cambiando los nombres de las columnas a un nombre estandar
+ {
+   
+  names(x)[grep(paste0("Value", "|", "abund", "|", "abd"), colnames(x))]           <- "abundance"
+  names(x)[grep(paste0("location", "|", "Localidad"), colnames(x))]                <- "locality"
+  names(x)[grep("Fecha", colnames(x))]                                             <- "date"
+  names(x)[grep(paste0("^Sitio", "|", "^sitio", "|", "^site"), colnames(x))]       <- "sites"
+  names(x)[grep(paste0("diver", "|", "Buzo"), colnames(x))]                        <- "observer"
+  names(x)[grep(paste0("Profundidad", "|", "depth"), colnames(x))]                 <- "depth_m"
+  names(x)[grep(paste0("Especie", "|", "^spp$", "|", "genus_species"), colnames(x))]<- "taxa"
+  names(x)[grep(paste0("^Transecto", "|", "^tran"), colnames(x))]                  <- "transect"
+  names(x)[grep(paste0("Tipo muestreo", "|", "type"), colnames(x))]                <- "type_uvc"
+  names(x)[grep(paste0("Área transecto (m)", "|", "t.area"), colnames(x))]         <- "area_uvc"
+  names(x)[grep(paste0("Ambiente", "|", "ambiente"), colnames(x))]                 <- "environment"
+  names(x)[grep(paste0("size"), colnames(x))]                                      <- "size_cm"
+}
+  
+# 1.7 quitando filas con NA en abundancia 
+  if(anyNA(x$abundance)) x <- x[!is.na(x$abundance),]
+  
+# 1.4 cambiando nombres de filas para hacer referencia a la base de donde proviene
+row.names(x) <- paste(names(fishes_l)[ii], 1:nrow(x), sep = "/")
+
+# # corrigiendo el formato de las fechas
+# x$date <- x$date %>% as.character()
+# x$date <- gsub("/", "-", x$date)
+
+# 1. corrigiendo nombres de sitios para que coincidan con la base de datos de coordenadas
+{
+## cambiando los nombres a minuscula
+x$sites %<>% str_to_lower()
+
+## cambiando caracteres diacriticos
+unwanted_array = list('á'='a', 'é'='e', 'í'='i', 'ó'='o', 'ú'='u', 'ñ'='n')
+
+### sites
+for(i in seq_along(unwanted_array)){
+  x$sites <- gsub(names(unwanted_array)[i],unwanted_array[i], x$sites)
+}
+
+## agregando guion bajo
+x$sites <- gsub(pattern = " ", replacement = "_", x$sites)
+
+## cambio de nombres
+# murcielago
+x$sites <- x$sites %>% replace(x$sites == "bajo_pochote,_isla_san_jose", "bajo_pochote")
+x$sites <- x$sites %>% replace(x$sites == "la_vita", "bajo_la_vita")
+x$sites <- x$sites %>% replace(x$sites == "el_refugio,_isla_cocinera",   "el_refugio")
+x$sites <- x$sites %>% replace(x$sites == "mm",                          "mm_2016")
+# x$sites <- x$sites %>% replace(x$sites == "san_pedrillo",                "isla_san_pedrito")
+
+# culebra
+x$sites <- gsub(pattern = "bajo_pochote,_isla_san_jose", replacement = "bajo_pochote", x$sites)
+x$sites <- gsub(pattern = "el_refugio,_isla_cocinera",   replacement = "el_refugio", x$sites)
+# x$sites <- gsub(pattern = "san_pedrillo",                replacement = "isla_san_pedrito", x$sites)
+x$sites <- gsub(pattern = "viradores",   replacement = "guiri_guiri", x$sites)
+x$sites <- gsub(pattern = "playa_guiri_guiri", replacement = "guiri_guiri", x$sites)
+x$sites <- gsub(pattern = "guiri-guiri", replacement = "guiri_guiri", x$sites)
+x$sites <- gsub(pattern = "^guiri$", replacement = "guiri_guiri", x$sites)
+x$sites <- gsub(pattern = "viradores_",  replacement = "guiri_guiri", x$sites)
+x$sites <- gsub(pattern = "^hume_",   replacement = "hume", x$sites)
+x$sites <- gsub(pattern = "^hume1",   replacement = "hume", x$sites)
+x$sites <- gsub(pattern = "^hume2",   replacement = "hume", x$sites)
+x$sites <- gsub(pattern = "^hume3",   replacement = "hume", x$sites)
+
+# isla del coco
+x$sites <- gsub(pattern = "^chatham$",   replacement = "bahia_chatham", x$sites)
+x$sites <- gsub(pattern = "manuelita_coral_garden",   replacement = "manuelita", x$sites)
+x$sites <- gsub(pattern = "^weston$",   replacement = "bahia_weston", x$sites)
+x$sites <- gsub(pattern = "weston_somero",   replacement = "bahia_weston", x$sites)
+
+# golfo dulce
+x$sites <- gsub(pattern = "^mogos",   replacement = "mogos", x$sites)
+x$sites <- gsub(pattern = "^mogos2",   replacement = "mogos", x$sites)
+x$sites <- gsub(pattern = "sandalo01",   replacement = "sandalo", x$sites)
+
+# datos reunion galapagos
+x$sites <- gsub(pattern = "viradores_",      replacement = "guiri_guiri", x$sites)
+x$sites <- gsub(pattern = "viradores",       replacement = "guiri_guiri", x$sites)
+x$sites <- gsub(pattern = "isla_chora_1",    replacement = "isla_chora", x$sites)
+x$sites <- gsub(pattern = "isla_chora_2",    replacement = "isla_chora", x$sites)
+x$sites <- gsub(pattern = "isla_cocinera_1", replacement = "isla_cocinera", x$sites)
+x$sites <- gsub(pattern = "isla_cocinera_2", replacement = "isla_cocinera", x$sites)
+
+# 4. eliminando sitios por ser duplicados de coordenadas
+# x$sites <- gsub("pacora",                         "canales_de_tierra", x$sites)
+# x$sites <- gsub("arrecife_escondido",             "arrecife_antiguo", x$sites)
+x$sites <- gsub("tombolo_noreste_2",              "tombolo_noreste_1", x$sites)
+x$sites <- gsub("sandalo_2",                      "sandalo_1", x$sites)
+# x$sites <- gsub("san_francisquito",               "san_francisquito_baja_norte", x$sites)
+# x$sites <- gsub("san_marcial_sur",                "san_marcial_norte", x$sites)
+# x$sites <- gsub("punta_berrendo_somer",           "punta_berrendo", x$sites)
+# x$sites <- gsub("^rodadero$",                     "santa_cruz_rodadero", x$sites)
+# x$sites <- gsub("santa_cruz_norte",               "santa_cruz", x$sites)
+# x$sites <- gsub("los_islotes_isla_espiritu_santo","los_islotes", x$sites)
+# x$sites <- gsub("los_islotes_ii",                 "los_islotes", x$sites)
+# x$sites <- gsub("isla_espiritu_santo_pailebote",  "pailebote", x$sites)
+# x$sites <- gsub("san_rafaelito_ii",               "san_rafaelito", x$sites)
+# x$sites <- gsub("los_morros",                     "el_bajo", x$sites)
+# x$sites <- gsub("cantiles_cabo_pulmo",            "el_cantil", x$sites)
+# x$sites <- gsub("las_piedras_bolas",              "el_bledito", x$sites)
+# x$sites <- gsub("^bledito$",                      "el_bledito", x$sites)
+# x$sites <- gsub("isla_san_juanito_sitio_19",      "isla_san_juanito_sitio_18", x$sites)
+# x$sites <- gsub("isla_san_juanito_sitio_25",      "isla_san_juanito_sitio_18", x$sites)
+# x$sites <- gsub("la_ensenada",                    "punta_corralon", x$sites)
+# x$sites <- gsub("hawaii_5",                       "el_ripial", x$sites)
+# x$sites <- gsub("la_hierbabuena",                 "el_ripial", x$sites)
+# x$sites <- gsub("punta_bufadora",                 "el_ripial", x$sites)
+# x$sites <- gsub("las_palmitas",                   "el_ripial", x$sites)
+x$sites <- gsub("isla_cocinera",                  "bajo_negro", x$sites)
+x$sites <- gsub("detras_bajo_negro",              "bajo_negro" , x$sites)
+# x$sites <- gsub("la_botella_chica",               "la_botella", x$sites)
+# x$sites <- gsub("punta_luz_de_dia_oeste",         "punta_luz_de_dia", x$sites)
+# x$sites <- gsub("piedra_jairo",                   "parguera2", x$sites)
+x$sites <- gsub("isla_pajara",                    "bahia_weston", x$sites)
+x$sites <- gsub("punta_presidio",                 "isla_vikinga", x$sites)
+}
+
+## 1. corrigiendo profundidades
+{
+x$depth_m %<>% as.character()
+# x$depth_m  %>% unique %>% sort
+
+x$depth_m[x$depth_m == "14-20"] <- "17"
+x$depth_m[x$depth_m == "14.15"] <- "14.5"
+x$depth_m[x$depth_m == "2.6-3.3"] <- "3"
+x$depth_m[x$depth_m == "3.1-4.4"] <- "4"
+x$depth_m[x$depth_m == "4.4-6"] <- "5"
+x$depth_m[x$depth_m == "4.7-6.1"] <- "5"
+x$depth_m[x$depth_m == "6.4-9"] <- "8"
+x$depth_m[x$depth_m == "7-10.5"] <- "9"
+
+# datos reunion galapagos
+x$depth_m[x$depth_m == "0.3"]     <- "0.50"
+x$depth_m[x$depth_m == "10-12"]   <- "12"
+x$depth_m[x$depth_m == "10-7"]    <- "8"
+x$depth_m[x$depth_m == "12-12"]   <- "13"
+x$depth_m[x$depth_m == "12-14"]   <- "13"
+x$depth_m[x$depth_m == "12-17"]   <- "14"
+x$depth_m[x$depth_m == "12-9"]    <- "10"
+x$depth_m[x$depth_m == "13-14"]   <- "14"
+x$depth_m[x$depth_m == "13-15"]   <- "14"
+x$depth_m[x$depth_m == "13-16"]   <- "14"
+x$depth_m[x$depth_m == "13-18"]   <- "16"
+x$depth_m[x$depth_m == "14-15"]   <- "14"
+x$depth_m[x$depth_m == "14-16"]   <- "15"
+x$depth_m[x$depth_m == "14,1-18"] <- "16"
+x$depth_m[x$depth_m == "14,5-15"] <- "15"
+x$depth_m[x$depth_m == "15-12"]   <- "14"
+x$depth_m[x$depth_m == "15-14"]   <- "14"
+x$depth_m[x$depth_m == "16-18"]   <- "17"
+x$depth_m[x$depth_m == "16-19"]   <- "18"
+x$depth_m[x$depth_m == "6-3,4"]   <- "5"
+x$depth_m[x$depth_m == "6-4"]     <- "5"
+x$depth_m[x$depth_m == "6-5"]     <- "6"
+x$depth_m[x$depth_m == "6-7"]     <- "6"
+x$depth_m[x$depth_m == "6,2-6"]   <- "6"
+x$depth_m[x$depth_m == "6,7-6"]   <- "6"
+x$depth_m[x$depth_m == "7-4,5"]   <- "6"
+x$depth_m[x$depth_m == "7-4,6"]   <- "6"
+x$depth_m[x$depth_m == "7-5"]     <- "6"
+x$depth_m[x$depth_m == "8-6,4"]   <- "7"
+x$depth_m[x$depth_m == "8-7"]     <- "8"
+x$depth_m[x$depth_m == "8-6"]     <- "7"
+x$depth_m[x$depth_m == "8-5"]     <- "6"
+x$depth_m[x$depth_m == "8,7-4"]   <- "6"
+x$depth_m[x$depth_m == "9-5"]     <- "7"
+x$depth_m[x$depth_m == "9-6"]     <- "8"
+x$depth_m[x$depth_m == "9,6-12"]  <- "11"
+x$depth_m[x$depth_m == "91"]      <- "9"
+
+x$depth_m[x$depth_m == "3-Apr"] <- x$depth_m[x$depth_m == "falta"] <- x$depth_m[x$depth_m == ""] <- x$depth_m[x$depth_m == "?"] <- x$depth_m[x$depth_m == "falta"] <- x$depth_m[x$depth_m == "no indica"] <- x$depth_m[x$depth_m == "profundo"] <- x$depth_m[x$depth_m == "somero"] <- x$depth_m[x$depth_m == "TRUE"] <- x$depth_m[x$depth_m == "43924"] <- x$depth_m[x$depth_m == "na"] <- NA
+}
+
+# 1. generando las columnas que faltan
+{
+  # locality
+  if(!"locality" %in% colnames(x))
+{x$locality <- NA;
+  } else {
+  # cambiando caracteres diacriticos
+for(i in seq_along(unwanted_array)){
+  x$locality <- gsub(names(unwanted_array)[i],unwanted_array[i], x$locality)
+  x$locality %<>% str_to_lower()
+  x$locality <- gsub(pattern = " ", replacement = "_", x$locality)
+    
+}
+    }
+
+  # ID_transect
+  if(!"ID_transect" %in% colnames(x))
+{x$ID_transect <- paste(x$locality, x$sites, round(x$depth_m %>% as.numeric(), 0), x$observer, x$transect, sep = "_");
+  } 
+  
+  # year
+  if(!"year" %in% colnames(x))
+{x$year <- NA
+  }
+   # month
+  if(!"month" %in% colnames(x))
+{x$month <- NA
+  }
+  
+  # day
+  if(!"day" %in% colnames(x))
+  {x$day <- 01
+  }
+    if(all(x$day %>% is.na))
+{x$day <- 01
+  }
+  
+  # date
+  if(!"date" %in% colnames(x))
+{x$date <- paste(x$year, x$month, x$day, sep = "-");
+  } else x$date %<>% as.character()
+  
+# date_format
+  # definiendo los datasets con diferente formato de fecha suponiendo que en cada dataset hay un solo formato de fecha
+ { 
+   x$date_format <- NA
+
+if(any(grep("/", x$date))){
+  if (any(sapply(x$date[grep("/", x$date)] %>% as.character, function(x) strsplit(x, "/")[[1]][1], USE.NAMES = FALSE) %in% 12:31) && all(sapply(x$date[grep("/", x$date)] %>% as.character, function(x) strsplit(x, "/")[[1]][2], USE.NAMES = FALSE) %in% 1:12)) {x$date_format <- "%d/%m/%Y" 
+  } }
+
+if(any(grep("/", x$date))){
+  if (all(sapply(x$date[grep("/", x$date)] %>% as.character, function(x) strsplit(x, "/")[[1]][1], USE.NAMES = FALSE) %in% 1:12) && all(sapply(x$date[grep("/", x$date)] %>% as.character, function(x) strsplit(x, "/")[[1]][2], USE.NAMES = FALSE) %in% 1:31)) {x$date_format <- "%m/%d/%Y"
+  } }
+
+if(any(grep("/", x$date))){
+  if (all(sapply(x$date[grep("/", x$date)] %>% as.character, function(x) strsplit(x, "/")[[1]][2], USE.NAMES = FALSE) %in% 1:31) && all(sapply(x$date[grep("/", x$date)] %>% as.character, function(x) strsplit(x, "/")[[1]][3], USE.NAMES = FALSE) %in% 1:12)) {x$date_format <- "%Y/%d/%m"
+  } }
+
+if(any(grep("/", x$date))){
+  if (all(sapply(x$date[grep("/", x$date)] %>% as.character, function(x) strsplit(x, "/")[[1]][2], USE.NAMES = FALSE) %in% 1:12) && all(sapply(x$date[grep("/", x$date)] %>% as.character, function(x) strsplit(x, "/")[[1]][3], USE.NAMES = FALSE) %in% 1:31)) {x$date_format <- "%Y/%m/%d"
+  } }
+  
+if(any(grep("-", x$date))){
+  if (all(sapply(x$date[grep("-", x$date)] %>% as.character, function(x) strsplit(x, "-")[[1]][1], USE.NAMES = FALSE) %>% as.numeric() %in% 1:31) && all(sapply(x$date[grep("-", x$date)] %>% as.character, function(x) strsplit(x, "-")[[1]][2], USE.NAMES = FALSE) %>% as.numeric() %in% 1:12)) {x$date_format <- "%d-%m-%Y" 
+  } }
+  
+if(any(grep("-", x$date))){
+  if (all(sapply(x$date[grep("-", x$date)] %>% as.character, function(x) strsplit(x, "-")[[1]][1], USE.NAMES = FALSE) %>% as.numeric() %in% 1:12) && all(sapply(x$date[grep("-", x$date)] %>% as.character, function(x) strsplit(x, "-")[[1]][2], USE.NAMES = FALSE) %>% as.numeric() %in% 1:31)) {x$date_format <- "%m-%d-%Y" 
+  } }
+  
+if(any(grep("-", x$date))){
+  if (all(sapply(x$date[grep("-", x$date)] %>% as.character, function(x) strsplit(x, "-")[[1]][2], USE.NAMES = FALSE) %>% as.numeric() %in% 1:31) && all(sapply(x$date[grep("-", x$date)] %>% as.character, function(x) strsplit(x, "-")[[1]][3], USE.NAMES = FALSE) %>% as.numeric() %in% 1:12)) {x$date_format <- "%Y-%d-%m" 
+  } }
+  
+if(any(grep("-", x$date))){
+  if (all(sapply(x$date[grep("-", x$date)] %>% as.character, function(x) strsplit(x, "-")[[1]][2], USE.NAMES = FALSE) %>% as.numeric() %in% 1:12) && all(sapply(x$date[grep("-", x$date)] %>% as.character, function(x) strsplit(x, "-")[[1]][3], USE.NAMES = FALSE) %>% as.numeric() %in% 1:31)) {x$date_format <- "%Y-%m-%d" 
+  } } 
+
+if(any(grep("-", x$date))){
+  if (any(grep(c("a|e|i|o|u"), sapply(x$date[grep("-", x$date)] %>% as.character, function(x) strsplit(x, "-")[[1]][2], USE.NAMES = FALSE))) && all(sapply(x$date[grep("-", x$date)] %>% as.character, function(x) strsplit(x, "-")[[1]][3], USE.NAMES = FALSE) %>% as.numeric() %in% 1:31)) {x$date <-
+    format(lubridate::ymd(x$date),"%Y-%m-%d")
+  x$date_format <-  "%Y-%m-%d" 
+  } } 
+   
+x$date_format[x$date_format %>% is.na] <- ""  
+  }
+
+# type_uvc
+    if(!"type_uvc" %in% colnames(x))
+{x$type_uvc <- NA;
+  }
+
+  # area_uvc #OJO
+  if(!"area_uvc" %in% colnames(x))
+{x$area_uvc <- 50;
+  }
+
+  # environment
+  if(!"environment" %in% colnames(x))
+{x$environment <- NA;
+  } else {
+    x$environment <- gsub(pattern = " ", replacement = "_", x$environment)
+    x$environment <- str_to_lower(x$environment)}
+}
+
+# 1.6 seleccionando columnas de interes
+x <- x[ , c("year", "month", "day", "date", "date_format", "locality", "sites", "ID_transect", "depth_m", "type_uvc", "area_uvc", "environment","taxa", "size_cm", "abundance")]
+  
+# x$date %>% unique()
+
+x$ID_transect %<>% as.character()
+# x$date <- as.Date(x$date, origin = "1899-12-30")
+x$size_cm %<>% as.numeric()
+
+# 1.9 definiendo la region
+x$region <- "costa_rica"
+
+# columna como id unico para sitio_localidad
+x$loc_site<- paste(x$locality, x$sites, sep  = "-")
+
+# return
+  x
+
+})
+
+names(fishes_l) <- names_fish_l
+
+# corroborando el nombre de las bases de datos
+# lapply(fishes_l, function(x) x %>% names %>% sort)
+```
+
+```{r uvc fishes_df, echo = FALSE, message = FALSE, warning = FALSE}
+# uniendo las bases de datos en un solo dataframe
+fishes_costa_rica <- do.call("rbind", fishes_l)
+
+# quitando filas con NA en abundancia 
+  if(anyNA(fishes_costa_rica$abundance)) fishes_costa_rica <- fishes_costa_rica[!is.na(fishes_costa_rica$abundance), ]
+
+
+# asignando la columna con el nombre del dataset del cual proviene cada dato
+fishes_costa_rica$dataset <- sapply(row.names(fishes_costa_rica) %>% as.character, function(x) strsplit(x, "/")[[1]][1], USE.NAMES = FALSE)
+fishes_costa_rica$dataset <- gsub(".NA$", replacement = "", fishes_costa_rica$dataset)
+
+row.names(fishes_costa_rica) <- 1:nrow(fishes_costa_rica)
+
+# 1.8 determinando la clase correcta para las columnas
+  # fecha
+fishes_costa_rica$date %<>% as.character()
+# fishes_costa_rica[, c("date" , "date_format")] %>% unique()
+
+# corrigiendo al resto de datasets
+fishes_costa_rica$date <-
+  do.call("rbind", lapply(1:nrow(fishes_costa_rica), FUN = function(a) {
+if(fishes_costa_rica$date_format[a] == "") {real_format <- fishes_costa_rica$date[a] %>% as.numeric() %>% as.Date(origin = "1899-12-30")
+fishes_costa_rica$date[a] <- format(as.Date(real_format), "%Y-%m-%d")
+} 
+    else {
+      real_format <- fishes_costa_rica$date[a] %>% as.Date(format = fishes_costa_rica$date_format[a], origin = "1899-12-30")
+fishes_costa_rica$date[a] <- format(as.Date(real_format), "%Y-%m-%d")
+}
+})) %>% as.character() %>% as.Date()
+
+
+# agregando dia, mes y anno a las bases de datos que no las tienen
+# corrigiendo los dias que se interpretaron como meses
+
+# corrigiendo los dias que se interpretaron como meses
+fishes_costa_rica$day <-
+  sapply(fishes_costa_rica$date %>% as.character, function(x) strsplit(x, "-")[[1]][3], USE.NAMES = FALSE)
+
+fishes_costa_rica$month <-
+  sapply(fishes_costa_rica$date %>% as.character, function(x) strsplit(x, "-")[[1]][2], USE.NAMES = FALSE)
+
+# format_ydm <- fishes_costa_rica$dataset[fishes_costa_rica$month > 12] %>% unique
+#   sapply(fishes_costa_rica$date[fishes_costa_rica$month > 12] %>% as.character, function(x) strsplit(x, "-")[[1]][2], USE.NAMES = FALSE)
+
+fishes_costa_rica$year[fishes_costa_rica$year %>% is.na] <-
+  sapply(fishes_costa_rica$date[fishes_costa_rica$year %>% is.na] %>% as.character, function(x) strsplit(x, "-")[[1]][1], USE.NAMES = FALSE)
+
+# fishes_costa_rica$date %>% unique()
+# fishes_costa_rica[fishes_costa_rica$date %>% is.na, ] %>% View()
+# fishes_costa_rica$dataset[fishes_costa_rica$year %>% is.na] %>% unique()
+# fishes_costa_rica$dataset[fishes_costa_rica$taxa == "cco"] %>% unique()
+
+# creando identificador unico para cada sitio
+fishes_costa_rica$site_id <-  paste(fishes_costa_rica$region, fishes_costa_rica$sites, sep = "-")
+
+# estandarizando nombres de especies
+fishes_costa_rica$taxa <- gsub("_", replacement = " ", fishes_costa_rica$taxa)
+fishes_costa_rica$taxa[fishes_costa_rica$taxa == "0"] <- fishes_costa_rica$taxa[fishes_costa_rica$taxa == "#N/a"] <- NA
+fishes_costa_rica$taxa %<>% str_to_sentence()
+# fishes_costa_rica$taxa %>% anyNA()
+
+# ## 5. seleccionando las localidades que poseen al menos 5 censos
+# # evaluando el numero de transectos por localidad
+# transects_locality <- aggregate(ID_transect ~ region + locality, data = fishes_costa_rica, 
+#                                 FUN = function(x) length(unique(x)))
+# # transects_locality[order(transects_locality$ID_transect), ] 
+# transects_locality <- transects_locality[transects_locality$ID_transect >= 5, ]
+# 
+# fishes_costa_rica <- fishes_costa_rica[fishes_costa_rica$locality %in% transects_locality$locality,]
+
+## 6. determinando la clase correcta para las columnas
+fishes_costa_rica$depth_m <- gsub(pattern = ",", replacement = ".", fishes_costa_rica$depth_m)
+fishes_costa_rica$depth_m %<>% as.character() %<>% as.numeric()
+
+fishes_costa_rica$size_cm <- gsub(pattern = ",", replacement = ".", fishes_costa_rica$size_cm)
+fishes_costa_rica$size_cm %<>% as.numeric()
+fishes_costa_rica$area_uvc %<>% as.numeric()
+
+
+fishes_costa_rica <- fishes_costa_rica[, c("year", "month", "day", "date", "date_format", "region", "locality", "sites", "loc_site", "site_id", "ID_transect", "depth_m", "type_uvc", "area_uvc", "environment", "taxa", "size_cm", "abundance", "dataset")]
+
+# 3. guardando los datos intermedios en formato .rda
+## guardando el archivo
+saveRDS(fishes_costa_rica,
+     file = "data_intermediate/fish/fishes_costa_rica.rds")
+
+rm(fishes_l,
+   fishes_l_formatochepe,
+   fishes_l_longformat,
+   names_fish_l)
+
+```
+
+```{r correccion de areas muestreadas, echo = FALSE, message = FALSE, warning = FALSE}
+# leyendo los archivos con la columna de corregir_por
+fishes_costa_rica_area_uvcno50_jjab <- readxl::read_excel("data_intermediate/fish/fishes_costa_rica_area_uvcno50_jjab.xlsx")
+names(fishes_costa_rica_area_uvcno50_jjab)[grep("obser", names(fishes_costa_rica_area_uvcno50_jjab))] <- "area_uvc_correct"
+
+names(fishes_costa_rica_area_uvcno50_jjab)[grep("type_uvc", names(fishes_costa_rica_area_uvcno50_jjab))] <- "type_uvc_correct"
+
+fishes_costa_rica_area_uvcno50_jjab$area_uvc %<>% as.numeric()
+fishes_costa_rica$area_uvc %<>% as.numeric()
+
+fishes_costa_rica <- fishes_costa_rica %>% left_join(fishes_costa_rica_area_uvcno50_jjab)
+
+# fishes_costa_rica$area_uvc[fishes_costa_rica$area_uvc != 50] %>% unique
+# fishes_costa_rica[fishes_costa_rica$area_uvc != 50,]  %>% View
+
+fishes_costa_rica$area_uvc[!fishes_costa_rica$area_uvc_correct %>% is.na()] <- fishes_costa_rica$area_uvc_correct[!fishes_costa_rica$area_uvc_correct %>% is.na()]
+
+fishes_costa_rica$type_uvc[!fishes_costa_rica$type_uvc_correct %>% is.na()] <- fishes_costa_rica$type_uvc_correct[!fishes_costa_rica$type_uvc_correct %>% is.na()]
+
+
+```
+
+&nbsp;
+
+### **Creación de base unificada**
+
+
+**Método:**  
+
+ 1. Se eliminan las filas de la base de datos recopilada en Galápagos que coinciden con los datos de las bases por región   
+    1.  Se crea una columna con la combinación sitio_fecha para comparar entre bases de datos  
+    1.  Se elimina de la base de datos de la reunion de Galápagos, los sitio_fecha (fecha con formato año-mes) repetidos con respecto a las bases de datos regionales  
+ 1. Se determina la clase correcta para las columnas  
+ 1. Se guarda la base de datos en formato .rda
+
+```{r eliminando duplicados, echo = FALSE, message = FALSE, warning = FALSE}
+# 1. eliminando duplicados que estan en varias bases de datos
+## 1.1 creando columna de combinación sitio_fecha para comparar entre bases de datos
+fishes_costa_rica$site_date <- paste(fishes_costa_rica$site_id, paste(sapply(fishes_costa_rica$date %>% as.character, function(x) strsplit(x, "-")[[1]][1], USE.NAMES = FALSE), sapply(fishes_costa_rica$date %>% as.character, function(x) strsplit(x, "-")[[1]][2], USE.NAMES = FALSE), sep = "-"), sep = "_")
+
+site_date_dup <- aggregate(dataset ~ site_date, data = fishes_costa_rica, FUN = function(x) length(unique(x)))
+site_date_dup <- site_date_dup$site_date[site_date_dup$dataset > 1]
+
+# fishes_costa_rica[fishes_costa_rica$site_date %in% site_date_dup,] %>% View
+# fishes_costa_rica[fishes_costa_rica$site_date %in% site_date_dup, c("dataset", "site_date")] %>% unique %>% View
+
+## 1.2 eliminando sitios duplicados en las bases de datos
+# definiendo la lista de site_date a eliminar
+fishes_costa_rica_remove <-
+  fishes_costa_rica[fishes_costa_rica$site_date %in% site_date_dup, c("dataset", "site_date")] %>% unique
+
+# generando la columna que indica si remover los datos o no
+fishes_costa_rica_remove$remove <- NA
+
+# quitando los que tienen formato csv
+fishes_costa_rica_remove$remove[grep("csv", fishes_costa_rica_remove$dataset)] <- "remove" 
+
+# entre los otros duplicados quito el primero
+fishes_costa_rica_remove$remove[fishes_costa_rica_remove$remove %>% is.na] <- do.call("rbind", lapply(1:nrow(fishes_costa_rica_remove[fishes_costa_rica_remove$remove %>% is.na,]), FUN = function(x){ if(fishes_costa_rica_remove$dataset[x] %in% fishes_costa_rica_remove$dataset[duplicated(fishes_costa_rica_remove$site_date)])
+{fishes_costa_rica_remove$remove[x] <- "remove"}
+ else {fishes_costa_rica_remove$remove[x] <- NA} } 
+)) 
+
+# agregando la columna que indica si remover los datos o no a la base de censos
+fishes_costa_rica <- fishes_costa_rica %>% left_join(fishes_costa_rica_remove)
+fishes_costa_rica <- fishes_costa_rica[fishes_costa_rica$remove %>% is.na(), ] # quitando los que no dicen "remove"
+
+fishes_costa_rica$remove <- NULL
+
+# verificando que no hayan datos en varias bases de datos
+# max(aggregate(dataset ~ site_date, data = fishes_costa_rica, FUN = function(x) length(unique(x)))[2]) # Debe ser 1
+
+saveRDS(fishes_costa_rica,
+     file = "data_intermediate/fish/fishes_costa_rica.rds")
+
+rm(fishes_costa_rica_remove,
+   site_date_dup)
+
+```
+
+```{r cuadro1 base unificada, echo = FALSE}
+ knitr::kable(fishes_costa_rica %>% tail,
+               caption = "Table 1. Vista reducida de la base de datos regional de censos visuales",
+               # align = c('c', 'c', 'l'),
+               row.names = TRUE,
+               escape = FALSE, 
+               booktabs = TRUE, 
+               format.args = list(big.mark = ","))  %>%
+    kableExtra::kable_styling(bootstrap_options = "condensed",
+                              font_size = 12,
+                              full_width = FALSE) %>%
+  kableExtra::scroll_box(width = "100%", height = "350px")
+# %>%
+    # kableExtra::row_spec(1:nrow(fishes_costa_rica), color = "black")
+ 
+```
+
+
+&nbsp;
+
+### Limpieza de datos
+
+&nbsp;
+
+#### **Nombres de especies**  
+Se modificaron los nombres de las especies, de ser necesario, según el nombre acepatado en [WoRMS](https://www.marinespecies.org/) y se eliminaron filas con reportes que no aportaban información (e.g. juvenil, roncador)
+
+**Método:**  
+
+ 1. Se cargan los datos de uvc  
+ 1. Se eliminan especies que no son peces  
+ 1. Se eliminan registros de "especies" que no aportan informacion (e.g. juvenil, roncador)  
+ 1. Se cambia el nombre de las especies según hayan sido aceptadas en WoRMS  
+ 1. Se dejan a genero, las especies que no se encuentran en WoRMS y ese registro sea la única representación del género  
+ 1. Se genera la lista de taxones registrados en los censos  
+ 1. Se guardan los datos intermedios en formato .rda  
+
+
+```{r species names, echo = FALSE, message = FALSE, warning = FALSE}
+# 1. calling uvc data
+fishes_costa_rica <- readRDS("data_intermediate/fish/fishes_costa_rica.rds")
+dat <- fishes_costa_rica
+
+# 2. eliminando especies que no son peces
+dat <- dat[!c(dat$taxa == "Toxopneustes roseus" | dat$taxa == "Caulerpa sertulariodes" | dat$taxa == "Callithamnion ecuadoreanum" | dat$taxa == "Eretmochelys imbricata" | dat$taxa == "Chelonia mydas" | dat$taxa == "Harpiliopsis spinigera" | dat$taxa == "Eurythoe complanata" | dat$taxa == "Zalophus wollebaeki" | dat$taxa == "Arctocephalus galapagoensis"),]
+
+# 3. eliminando filas con nombres que no aportan informacion
+dat <- dat[!c(dat$taxa == "Silver side" | dat$taxa == "Scianido oliva" | dat$taxa == "Roncadores"| dat$taxa == "Juvenille"| dat$taxa == "Unidentified fish" | dat$taxa == "NA" | dat$taxa == "#N/a" | dat$taxa == "Zalophus californianus wolebacki"), ]
+
+## corrigiendo generos
+dat$taxa <- gsub(pattern = " juv",  replacement = "", dat$taxa)
+dat$taxa <- gsub(pattern = " spp",  replacement = "", dat$taxa)
+dat$taxa <- gsub(pattern = " sp a", replacement = "", dat$taxa)
+dat$taxa <- gsub(pattern = " sp.",  replacement = "", dat$taxa)
+dat$taxa <- gsub(pattern = " sp1",  replacement = "", dat$taxa)
+dat$taxa <- gsub(pattern = " sp",   replacement = "", dat$taxa)
+
+# 4. cambiando el nombre de las taxas según hayan sido aceptadas en WoRMS
+# dat$taxa <- gsub(pattern = "", replacement = "", dat$taxa)
+
+incorrectos <- c("Acanthurus triostegus triostegus",  "Aerothron meleagris",  "Alutera scripta",  "Anampses femeninus",  "Anistremus interruptus",  "Anisotremus dovii",  "Antennarius sanguineus",  "Apogon pacifici",  "Axoclinus(?)",  "Axoclinus(?)",  "Axoclinus (?)",  "Axoclinuslucillae",  "Axoclinuscocoensis",  "Axoclinusrubinoffi",  "Cantherines",  "Cantherines dumerilii",  "Cantherines rapanui",  "Carangoides caballus",  "Caranx orthogrammus",  "Cephalopholis colonus",  "Chilomycterus affinis",  "Cocodrilichthys gracilis",  "Corbula macrops",  "Cromis atrilobata",  "Cyclopseta panamensis",  "Dasyatis dipterura",  "Dasyatis longa",  "Dasyatis longus",  "Decapterus sanctaehelenae",  "Decapterus sanctae-helenae",  "Doryrhamphus excisus excisus",  "Elacatinus nesiotes",  "Elacatinus punticulatus",  "Ephinephelus labriformis",  "Eugerres bravimanus",  "Eutghynnus lineatus",  "Girella fremenvillei",  "Girella freminvillei",  "Gnathanodonciosus",  "Goniistius plessisi",  "Haemulon scudderi",  "Haemulon scudderiii",  "Harpiliopsisnigera",  "Hemirhamphus saltator",  "Hoplopagrus guentheri",  "Hoplopagrus guentheriii",  "Kiphosus",  "Kyphosus azurea",  "Labrisomus dentriticus",  "Lepidonectes bimaculata",  "Malacoctenus cf zacae",  "Manta birostris",  "Manta hamiltoni",  "Microspathadon bairdi",  "Microspathadon dorsalis",  "Mugil rammelsbergi",  "Myripristis leiognathos",  "Neoniphon suborbitalis",  "Ophioblenus steindachneri",  "Ostracion meleagris meleagris",  "Oxyrictus typus",  "Prionurus punctactus",  "Rhinobatos prahli",  "Ptereleoris carminata",  "Sargocentron humeralis",  "Sargocentron punctatissimus",  "Sargocentron suborbitalis",  "Scorpaena plumieri mystes",  "Scomberomus sierra",  "Scorpaena xyris",  "Serranus psitacinus",  "Spheroides angusticeps",  "Spheroides annulatus",  "Spheroides lobatus",  "Stegastes acapulcoencis",  "Stegastes rectrifaenum",  "Stegastes rectrifraenum",  "Stehojulis bandanensis",  "Stethojoulis bandanensis",  "Taenioconger klausewitzi",  "Taeniura meyeri",  "Taeniura meyeni",  "Thalassoma gramaticum",  "Tigrigobius inornatus",  "Tigrigobius puncticulatus",  "Trachinotus rhodophus",
+  "Urolophus halleri",  "Urobatis tumbosensis",  "Xanthychthys caeruleolineatus",  "Xyrichtys victory")
+ 
+correctos <- c("Acanthurus triostegus",  "Arothron meleagris",  "Aluterus scriptus",  "Anampses femininus",  "Anisotremus interruptus",  "Genyatremus dovii",  "Antennatus sanguineus",  "Apogon pacificus",  "Axoclinus",  "Axoclinus",  "Axoclinus",  "Axoclinus lucillae",  "Axoclinus cocoensis",  "Axoclinus rubinoffi",  "Cantherhines",  "Cantherines dumerilii",  "Cantherines rapanui",  "Caranx caballus",  "Carangoides orthogrammus",  "Paranthias colonus",  "Chilomycterus reticulatus",  "Crocodilichthys gracilis",  "Corvula macrops",  "Chromis atrilobata",  "Cyclopsetta panamensis",  "Hypanus dipterurus",  "Hypanus longus", "Hypanus longus",  "Decapterus punctatus",  "Decapterus punctatus",  "Doryrhamphus excisus",  "Tigrigobius nesiotes",  "Elacatinus puncticulatus",  "Epinephelus labriformis",  "Eugerres brevimanus",  "Euthynnus lineatus",  "Girella freminvillii",  "Girella freminvillii",  "Gnathanodon speciosus",  "Cheilodactylus plessisi",  "Haemulon scudderii",  "Haemulon scudderii",  "Harpiliopsis spinigera",  "Hemiramphus saltator",  "Hoplopagrus guentherii",  "Hoplopagrus guentherii",  "Kyphosus",  "Kyphosus azureus",  "Labrisomus dendriticus",  "Lepidonectes bimaculatus",  "Malacoctenus zacae",  "Mobula birostris",  "Mobula birostris",  "Microspathodon bairdii",  "Microspathodon dorsalis",  "Mugil rammelsbergii",  "Myripristis leiognathus",  "Sargocentron suborbitale",  "Ophioblennius steindachneri",  "Ostracion meleagris",  "Oxycirrhites typus",  "Prionurus punctatus",  "Pseudobatos prahli",  "Ptereleotris carinata",  "Sargocentron",   "Sargocentron punctatissimum",  "Sargocentron suborbitale",  "Scorpaena mystes",  "Scomberomorus sierra",  "Scorpaenodes xyris",  "Serranus psittacinus",  "Sphoeroides angusticeps",  "Sphoeroides annulatus",  "Sphoeroides lobatus",  "Stegastes acapulcoensis",  "Stegastes rectifraenum",  "Stegastes rectifraenum",  "Stethojulis bandanensis",  "Stethojulis bandanensis",  "Heteroconger klausewitzi",  "Taeniurops meyeni",  "Taeniurops meyeni",  "Thalassoma grammaticum",  "Elacatinus digueti",  "Elacatinus puncticulatus",  "Trachinotus rhodopus",  "Urobatis halleri",  "Urobatis tumbesensis",  "Xanthichthys caeruleolineatus",  "Xyrichtys victori")
+
+replacements <- cbind(incorrectos, correctos) %>% as.data.frame()
+
+for (i in 1:length(incorrectos)) {
+  dat$taxa <- dat$taxa %>% gsub(pattern = incorrectos[i], replacement = correctos[i])
+  
+}
+# dat$taxa[dat$taxa %in% viejos] %>% unique()
+# dat$taxa %>% unique %>% sort
+
+# 6. generando la lista de taxones de uvc
+spp_uvc <- dat$taxa %>% unique() %>% sort() %>% as.data.frame()
+names(spp_uvc) <- "taxa"
+
+# agregando todos los generos separando la columna taxa
+spp_uvc %<>% separate(taxa, c("genus", "epithet"), " ", remove = FALSE)
+
+# uniendo los generos y las especies en una base de datos
+genus <- spp_uvc$genus %>% as.data.frame()
+genus$tax_level <- "genus"
+
+taxa  <- spp_uvc$taxa  %>% as.data.frame()
+taxa$tax_level <- "species"
+
+spp_uvc <- rbind(genus, taxa)
+names(spp_uvc)[1] <- "taxa"
+
+rm(genus, taxa)
+spp_uvc <- spp_uvc[!duplicated(spp_uvc$taxa),]
+
+
+fishes_costa_rica_correct_taxa <- dat 
+
+## guardando los datos intermedios
+saveRDS(fishes_costa_rica_correct_taxa,
+     file = "data_intermediate/fish/fishes_costa_rica_correct_taxa.rds")
+
+# clean up intermediate objects
+rm(dat,
+   incorrectos,
+   correctos,
+   fishes_costa_rica)
+
+```
+
+
+```{r cuadro2 limpieza spp, eval = FALSE, echo = FALSE}
+"**Cuadro 2.** Vista reducida de los nombres de especies incorrectos en la base de datos regional y la versión correcta por la cual se reemplazó." 
+replacements %>% head
+
+rm(replacements)
+
+"**Cuadro 3.** Taxones presentes en los monitoreos realizados"
+fishes_costa_rica_correct_taxa$taxa %>% unique %>% sort %>% na.omit %>% as.data.frame()
+```
+
+
+&nbsp;
+
+#### **Tamaños y abundancias**
+Se realizó un análisis por parte de expertos en censos de peces en la región y se corrigieron los tamaños y abundancias reportados fuera del ámbito posible para las especies en cuestión. Se utilizaron como referencia los tamaños máximos y mínimos reportados en [@Froese2019](https://www.fishbase.de/) y en  [@Robertson2015a](https://biogeodb.stri.si.edu/sftep/es/pages) como segunda fuente     
+
+**Método:**  
+
+ 1. Se cargan los datos intermedios de uvc  
+ 1. Se corrigen las abundancias  
+    1.  Se redondean las abundancias para eliminar los decimales  
+    1.  Se corrigen abundancias (según criterio de expertos)  
+ 1. Se corrigen los registros que representan densidades, colocando las abundancias correspondientes  
+ 1. Se corrigen los tamaños fuera de rangos esperables  
+    1.  Se descargan los tamaños máximos y mínimos reportados en [@Froese2019](https://www.fishbase.de/) para la lista de especies de censos (nota: No existen registros para todas las especies)  
+    1.  Se asigan el tamaño máximo reportado a los registros que tienen tamaños mayores  
+    1.  Se asigan el tamaño mínimo reportado a los registros que tienen tamaños menores  
+    1.  Se genera una lista de los tamaños máximos reportados en [STRI](https://biogeodb.stri.si.edu/sftep/es/pages) para la lista de especies que no se encontraban en [FishBase](https://www.fishbase.de/)  
+    1.  Se asigan el tamaño máximo reportado a los registros que tienen tamaños mayores  
+    1.  Se corrigen casos particulares que, según criterio de expertos, podrían representar errores de digitación  
+ 1. Se corrigen especies posiblemente mal identificadas  
+ 1. Se guardan los datos intermedios "fishes_costa_rica_correct_size_abundance.rds"  
+
+```{r size and abundance, echo = FALSE, message = FALSE, warning = FALSE}
+# 1. cargando los datos intermedios de uvc 
+fishes_costa_rica_correct_taxa <- readRDS("data_intermediate/fish/fishes_costa_rica_correct_taxa.rds")
+
+dat <- fishes_costa_rica_correct_taxa
+dat$size_cm %<>% as.numeric()
+
+# 2. corrigiendo abundancias
+dat$abundance <- dat$abundance %>% round
+
+## 2.2 corrigiendo abundancias (según criterio de expertos)
+v1 <- c("Apogon atradorsatus"      , 1000, 1000,
+         "Haemulon steindachneri"  , 1000,  150,
+         "Mulloidichthys dentatus" ,  100,   10,
+         "Paranthias colonus"      , 1000,  800,
+         "Serranus tico"           , 1500, 1500,
+         "Thalassoma lucasanum"    , 1333, 1333,
+         "Thalassoma lucasanum"    , 592.5,  592)
+
+m1 <- matrix(v1, ncol = 3, byrow = TRUE)
+
+correction_abundance <- as.data.frame(m1)
+correction_abundance$V2 <- as.numeric(correction_abundance$V2)
+correction_abundance$V3 <- as.numeric(correction_abundance$V3)
+names(correction_abundance) <- c("taxa", "Si mayor a", "corregir por")
+correction_abundance %<>% as.data.frame()
+
+### loop para corrección de abundancias
+for (i in 1:length(correction_abundance$taxa)) {
+  dat$abundance <- ifelse(dat$taxa == correction_abundance$taxa[i] & dat$abundance > correction_abundance$`Si mayor a`[i], correction_abundance$`corregir por`[i], dat$abundance)
+  
+}
+
+# 3. corrigiendo densidades (i.e. abundances < 1)
+dat %<>%
+  dplyr::mutate(abundance = ifelse(abundance < 1, round(abundance * area_uvc), abundance))
+
+# 4. corrigiendo tamaños
+# ## 4.1 descargando los tamaños máximos y mínimos reportados en Fishbase 
+# fishbase_info <-  length_weight(spp_uvc$taxa)
+# ## 2.2 guardando el objeto
+# ## Asignando el nombre al documento
+# file.name <- "fishbase_info.rda"
+# 
+# ## asignando la carpeta
+# save_locale <- "data_raw/taxa_attributes/"
+# 
+# ## saving
+# save(fishbase_info,
+#      file = paste0(save_locale, file.name))
+# 
+
+load("data_raw/taxa_attributes/fishbase_info.rda")
+
+fishbase_info %<>%
+  dplyr::select(Species,
+                LengthMin,
+                LengthMax)
+                # a,
+                # b,
+                # aTL)
+
+### calculando el tamano minimo y maximo promedio por especie
+bodysize_range <- aggregate(LengthMax ~ Species, data = fishbase_info, FUN = function(x) round(mean(x)))
+bodysize_range$LengthMin <-  aggregate(LengthMin ~ Species, data = fishbase_info, FUN = function(x) round(mean(x)))[,2]
+
+## 4.2 corrigiendo tamanos mayores al maximo reportado
+for (i in 1:length(bodysize_range$Species)) {
+  dat$size_cm <- ifelse(dat$taxa == bodysize_range$Species[i] & dat$size_cm > bodysize_range$LengthMax[i], bodysize_range$LengthMax[i], dat$size_cm)
+  
+}
+
+## 4.3 corrigiendo tamanos menores al minimo reportado
+for (i in 1:length(bodysize_range$Species)) {
+  dat$size_cm <- ifelse(dat$taxa == bodysize_range$Species[i] & dat$size_cm < bodysize_range$LengthMin, bodysize_range$LengthMin[i], dat$size_cm)
+  
+}
+
+## 4.4 tamaños máximos reportados en STRI (https://biogeodb.stri.si.edu/sftep/es/pages) para la lista de especies que no se encontraban en Fishbase
+tam_max_stri <-  c(30, 90, 40, 61, 7, 90, 92.5, 45, 150, 75, 27.3, 180, 7, 38, 111, 61, 74, 36, 13, 30, 60, 100, 117, 90, 51, 91, 17) 
+
+# importante revisar posibles errores como con Alphestes, que parece que no se leyo bien la coma y no que hubo sobreestimacion
+
+taxa <- c("Alphestes immaculatus", "Anisotremus interruptus", "Arothron meleagris", "Bodianus eclancheri", "Eleotrica cablea", "Enchelycore lichenosa", "Euthynnus lineatus", "Girella freminvillii", "Gymnomuraena zebra", "Haemulidae", "Halichoeres notospilus", "Hypanus dipterurus", "Hypsoblennius brevipinnis", "Kyphosus elegans", "Muraena argus", "Muraena lentiginosa", "Myrichthys tigrinus", "Orthopristis forbesi", "Oxycirrhites typus", "Pareques perissa", "Prionurus laticlavius", "Pseudobalistes naufragium", "Sarda orientalis", "Scarus", "Scorpaena mystes", "Sphyraena idiastes", "Stegastes beebei")
+
+tam_stri <- cbind(taxa, tam_max_stri) %>% as.data.frame()
+tam_stri$tam_max_stri %<>% as.numeric()
+
+## 4.5 asigando tamaño máximo a los registros que tienen tamaños mayores
+for (i in 1:length(tam_stri$taxa)) {
+  dat$size_cm <- ifelse(dat$taxa == tam_stri$taxa[i] & dat$size_cm > tam_stri$tam_max_stri[i], tam_stri$tam_max_stri[i], dat$size_cm)
+
+}
+
+## 4.6 corrigiendo casos particulares según criterio de expertos
+v1 <- {c("Abudefduf troschelii"         , 25,  20.0,
+         "Acanthemblemaria castroi"    , 10,   6.0,
+         "Acanthurus nigricans"        , 25,  20.0,
+         "Apogon atradorsatus"         , 15,  12.5,
+         "Aulostomus chinensis"        , 90,    80,
+         "Balistes polylepis"          , 90,    80,
+         "Bodianus diplotaenia"        , 85.5,  80,
+         "Bothus leopardinus"          , 25,    20,
+         "Canthigaster cyanetron"      ,  5,     5,
+         "Canthigaster janthinoptera"  , 10,    10,
+         "Centropyge hotumatua"        , 10,    10,
+         "Cephalopholis panamensis"    , 40,    40,
+         "Chaenopsis schmitti"         , 10,    10,
+         "Chaetodon humeralis"         , 30,    25,
+         "Chilomycterus reticulatus"   , 50,    50,
+         "Chromis atrilobata"          , 15,  12.5,
+         "Chromis limbaughi"           , 10,    10,
+         "Chrysiptera rapanui"         ,  6,     5,
+         "Cirrhitichthys oxycephalus"  , 10,    10,
+         "Coryphopterus urospilus"     ,  7,     7,
+         "Crocodilichthys gracilis"    ,  7,     7,
+         "Ctenochaetus marginatus"     , 30,    30,
+         "Diodon holocanthus"          , 60,    60,
+         "Doryrhamphus excisus"        , 10,    10,
+         "Epinephelus labriformis"     , 65,    65,
+         "Gymnothorax castaneus"       , 170,  170,
+         "Gymnothorax dovii"           , 200,  200,
+         "Gymnothorax porphyreus"      , 40,    40,
+         "Haemulon maculicauda"        , 30,    30,
+         "Haemulon scudderii"          , 40,    40,
+         "Halichoeres adustus"         , 15,    15,
+         "Halichoeres chierchiae"      , 20,    20,
+         "Halichoeres dispilus"        , 25,    25,
+         "Halichoeres melanotis"       , 15,    15,
+         "Halichoeres nicholsi"        , 40,    40,
+         "Holacanthus passer"          , 40,    40,
+         "Johnrandallia nigrirostris"  , 20,    20,
+         "Kyphosus analogus"           , 45,    45,
+         "Labrisomus dendriticus"      , 15,    15,
+         "Lepidonectes corallicola"    , 10,    10,
+         "Lutjanus argentiventris"     , 80,    80,
+         "Lutjanus viridis"            , 40,    40,
+         "Lythrypnus gilberti"         ,  5,     5,
+         "Malacoctenus tetranemus"     ,  8,     8,
+         "Microspathodon bairdii"      , 30,    30,
+         "Microspathodon dorsalis"     , 30,    30,
+         "Mulloidichthys dentatus"     , 40,    40,
+         "Myripristis berndti"         , 35,    35,
+         "Myripristis leiognathus"     , 20,    20,
+         "Nicholsina denticulata"      , 40,    40,
+         "Ophioblennius steindachneri" , 20,    20,
+         "Oplegnathus insignis"        , 70,    80,
+         "Ostracion meleagris"         , 30,    30,
+         "Paranthias colonus"          , 37,    37,
+         "Plagiotremus azaleus"        , 10,    10,
+         "Pseudolabrus fuentesi"       , 15,    15,
+         "Rhinoptera steindachneri"    , 100,  100,
+         "Rypticus bicolor"            , 30,    30,
+         "Sargocentron suborbitale"    , 25,    25,
+         "Scarus compressus"           , 70,    70,
+         "Scarus perrico"              , 80,    80,
+         "Scarus rubroviolaceus"       , 80,    80,
+         "Scomberomorus sierra"        , 90,    90,
+         "Serranus psittacinus"        , 20,    20,
+         "Stegastes acapulcoensis"     , 17,    17,
+         "Stegastes arcifrons"         , 15,    15,
+         "Stegastes flavilatus"        , 10,    10,
+         "Stegastes leucorus"          , 15,    15,
+         "Stegastes rectifraenum"      , 10,    10,
+         "Stethojulis bandanensis"     , 15,    15,
+         "Strongylura scapularis"      , 40,    40,
+         "Sufflamen verres"            , 40,    40,
+         "Synodus lacertinus"          , 20,    20,
+         "Thalassoma lucasanum"        , 20,    20,
+         "Xenocys jessiae"             , 30,    30,
+         "Zanclus cornutus"            , 25,    25)}
+
+m1 <- matrix(v1, ncol = 3, byrow = TRUE)
+
+correction_size <- as.data.frame(m1)
+correction_size$V2 <- as.numeric(correction_size$V2)
+correction_size$V3 <- as.numeric(correction_size$V3)
+names(correction_size) <- c("taxa", "Si mayor a", "corregir por")
+correction_size %<>% as.data.frame()
+
+for (i in 1:length(correction_size$taxa)) {
+  dat$size_cm <- ifelse(dat$taxa == correction_size$taxa[i] & dat$size_cm > correction_size$`Si mayor a`[i], correction_size$`corregir por`[i], dat$size_cm)
+
+}
+
+# 5. corrigendo especies posiblemente mal identificadas
+dat %<>%
+  dplyr::mutate(taxa = ifelse(taxa == "Muraena lentiginosa" & size_cm > 70, "Gymnothorax dovii", taxa))
+
+# agregando la columna region_site
+
+dat$region_site <- paste(dat$region, dat$sites, sep = "-")
+
+fishes_costa_rica_correct_size_abundance <- dat
+
+# 6. guardando los datos intermedios
+saveRDS(fishes_costa_rica_correct_size_abundance,
+        file = "data_intermediate/fish/fishes_costa_rica_correct_size_abundance.rds")
+
+# size_taxa <- aggregate(size_cm ~ taxa, FUN = function(x) round(mean(x)), data = fishes_costa_rica_correct_size_abundance)
+# names(size_taxa) <- c("Especie", "Tamaño promedio")
+# size_taxa[order(size_taxa$`Tamaño promedio`), ] 
+# size_taxa %>% head
+
+# clean up intermediate objects
+rm(dat,
+   fishbase_info,
+   i,
+   m1,
+   v1,
+   bodysize_range,
+   tam_max_stri,
+   tam_stri,
+   taxa) 
+
+```
+
+&nbsp;
+
+
+```{r cuadro4 limpieza abundancias, echo = FALSE}
+
+# correction_abundance %>% head
+
+species_abund_min <- aggregate(abundance ~ taxa, min, dat = fishes_costa_rica_correct_size_abundance)
+names(species_abund_min)[grep("abundance", names(species_abund_min))] <- "min_abund"
+
+species_abund_max <- aggregate(abundance ~ taxa, max, dat = fishes_costa_rica_correct_size_abundance)
+names(species_abund_max)[grep("abundance", names(species_abund_max))] <- "max_abund"
+
+species_abund <- species_abund_min %>% left_join(species_abund_max)
+
+
+ # knitr::kable(species_abund,
+ #               caption = "Table 2. Rango de tamaño reportado para cada taxon",
+ #               # align = c('c', 'c', 'l'),
+ #               row.names = TRUE,
+ #               escape = FALSE, 
+ #               booktabs = TRUE, 
+ #               format.args = list(big.mark = ","))  %>%
+ #    kableExtra::kable_styling(bootstrap_options = "condensed",
+ #                              font_size = 12,
+ #                              full_width = FALSE) %>%
+ #  kableExtra::scroll_box(width = "100%", height = "350px")
+# %>%
+    # kableExtra::row_spec(1:nrow(fishes_costa_rica), color = "black")
+ 
+ DT::datatable(species_abund, caption = "Cuadro  2. Rango de tamaño reportado para cada taxon",
+               editable = list(target = 'row'),
+               rownames = FALSE, style = "bootstrap", 
+               filter = 'top', 
+               # options = list(pageLength = 10, autoWidth = TRUE, dom = 'ft'),
+               autoHideNavigation = TRUE, escape = FALSE)
+ 
+rm(species_abund_max,
+   # correction_abundance,
+   species_abund_min,
+   species_abund)
+```
+
+&nbsp;
+
+
+```{r cuadro5 limpieza tallas, echo = FALSE}
+# correction_size %>% head
+
+species_sizes_min <- aggregate(size_cm ~ taxa, min, dat = fishes_costa_rica_correct_size_abundance)
+names(species_sizes_min)[grep("size", names(species_sizes_min))] <- "min_size_cm"
+
+species_sizes_max <- aggregate(size_cm ~ taxa, max, dat = fishes_costa_rica_correct_size_abundance)
+names(species_sizes_max)[grep("size", names(species_sizes_max))] <- "max_size_cm"
+
+species_sizes <- species_sizes_min %>% left_join(species_sizes_max)
+
+# knitr::kable(species_sizes,
+#                caption = "Cuadro 3. Rango de tamaño reportado para cada taxon",
+#                # align = c('c', 'c', 'l'),
+#                row.names = TRUE,
+#                escape = FALSE, 
+#                booktabs = TRUE, 
+#                format.args = list(big.mark = ","))  %>%
+#     kableExtra::kable_styling(bootstrap_options = "condensed",
+#                               font_size = 12,
+#                               full_width = FALSE) %>%
+#   kableExtra::scroll_box(width = "100%", height = "350px")
+# %>%
+    # kableExtra::row_spec(1:nrow(fishes_costa_rica), color = "black")
+
+ DT::datatable(species_sizes, caption = "Cuadro 3. Rango de tamaño reportado para cada taxon")
+ 
+rm(species_sizes_max,
+   # correction_size,
+   species_sizes_min,
+   species_sizes)
+
+
+```
+
+&nbsp;
+
+## Taxonomía
+ Se generó una base de datos con aspectos relevantes de taxonomía y rasgos funcionales de cada especie observada en la región. Se utilizó la información de [WoRMS](https://www.marinespecies.org/) sobre la taxonomía de cada especie 
+
+**Método:**  
+
+ 1. Se cargan los datos intermedios de uvc  
+ 1. Se extrae la informacion el aphiaID (identificador único de cada taxon, ahora llamado wormsid)  
+ 1. Se une la lista de taxones de censos con su wormsid
+ 1. Se extrae la clasificacion taxonomica de cada taxón de WoRMS
+ 1. Se agrega una fila por cada género a la base de datos taxonomica  
+ 1. Se genera una columna que diferencia el nivel taxonomico de cada fila  
+ 1. Se genera la columna "taxa", que contiene el nivel taxonómico menor de cada fila
+ 1. Se guardan los datos intermedios "fish_taxa" con todos los niveles taxonómicos de los taxones registrados en los censos  
+
+
+```{r taxonomy, echo = FALSE, message = FALSE, warning = FALSE}
+# 1. cargando los datos intermedios de uvc
+fishes_costa_rica_correct_size_abundance <- readRDS("data_intermediate/fish/fishes_costa_rica_correct_size_abundance.rds")
+
+dat <- fishes_costa_rica_correct_size_abundance
+
+# # 2. obteniendo los IDs the las especies de uvc de "worms", ULTIMA DESCARGA 2020-10-27
+# wormsid_uvc <- pbsapply(spp_uvc$taxa, function(x)
+#   try(get_wormsid(x, kingdom = "Animalia", accepted = TRUE, messages = FALSE), silent = TRUE), USE.NAMES = TRUE)
+# 
+# ## 2.1 cambiando el formado y agregando nombres correctos a las filas
+# wormsid_uvc %<>% as.data.frame()
+# wormsid_uvc$taxa <- wormsid_uvc %>% rownames()
+# rownames(wormsid_uvc) <- 1:nrow(wormsid_uvc)
+# names(wormsid_uvc)[1] <- "wormsid"
+# 
+# ## 2.2 guardando el objeto
+# ## Asignando el nombre al documento
+# file.name <- "wormsid_uvc.rda"
+# 
+# ## asignando la carpeta
+# save_locale <- "data_raw/taxa_attributes/"
+# 
+# ## saving
+# save(wormsid_uvc,
+#      file = paste0(save_locale, file.name))
+# 
+# ## 2.3 agregando wormsid a la base de datos uvc
+# dat <- dat %<>%
+#   left_join(wormsid_uvc)
+#
+# dat$taxa[dat$wormsid %>% is.na] %>% unique()
+# dat$wormsid %<>% as.character()
+
+# 2. cargando el wormsid de los datos de censos
+
+load("data_raw/taxa_attributes/wormsid_uvc.rda") # ULTIMA DESCARGA 2020-10-27
+
+# 3. uniendo la lista de taxones de censos con su wormsid
+spp_uvc <- spp_uvc %>% 
+  left_join(wormsid_uvc)
+
+# wormsids_spp <- spp_uvc$wormsid[spp_uvc$tax_level == "species"]
+# 
+# # 4. extrayendo la clasificacion taxonomica de WoRMS # ULTIMA DESCARGA 2020-10-27
+# tax.data <- pbsapply(wormsids_spp, function(x)
+#   try(classification(x, db = "worms"), silent = TRUE), USE.NAMES = TRUE)
+# 
+# ## guardando el objeto
+# ## Asignando el nombre al documento
+# file.name <- "tax.data.rda"
+# 
+# ## asignando la carpeta
+# save_locale <- "data_raw/taxa_attributes/"
+# 
+# ## saving
+# save(tax.data,
+#      file = paste0(save_locale, file.name))
+# 
+# 4. cargando la clasificacion taxonomica de WoRMS
+
+load("data_raw/taxa_attributes/tax.data.rda") # ULTIMA DESCARGA 2020-10-27
+
+
+## arreglando el formato. transponiendo las especies
+ttax.data <- lapply(tax.data, function(x) {
+  t(x)
+})
+
+## arreglando el formato. convirtiendolo a data frame
+tax.info <- sapply(ttax.data, function(x) {
+  txd <- as.data.frame(t(x[1, ]), stringsAsFactors = FALSE)
+  colnames(txd) <- x[2,]
+  
+  return(txd)
+})
+
+## arreglando formato. uniendo las especies en una sola base (NA en los niveles taxonomicos inferiores con dplyr)
+tax.info <- do.call(bind_rows, tax.info)
+
+tax.info <- tax.info[, c("Kingdom", "Phylum", "Class", "Order", "Family", "Species")]
+tax.info %<>% separate(Species, c("Genus", "Epithet"), " ", remove = FALSE)
+
+## 5. agregando una fila por cada género
+taxa_gen <- tax.info[!duplicated(tax.info$Genus), ]
+
+### poniendoles NA a las columnas que no deben tener informacion
+taxa_gen$Epithet <- taxa_gen$Species <- NA
+
+# 6. generando una columna que permita diferenciar las filas que representan especies de las que representan generos
+taxa_gen$tax_level <- "genus"
+tax.info$tax_level <- "species"
+
+### generando un objeto con todas los taxones de censos y sus clasificacion taxonomica
+fish_taxa <- rbind(tax.info, taxa_gen)
+
+### numerando las filas en orden 
+rownames(fish_taxa) <- 1:nrow(fish_taxa)
+
+# 7. generando una columna que agrupe tanto las especies como los generos para utilizarla como columna en comun para unir las bases de datos de uvc con la de traits
+fish_taxa$Genus %<>% as.character()
+fish_taxa$taxa <- ifelse(is.na(fish_taxa$Species), fish_taxa$Genus, fish_taxa$Species)
+
+#. guardando el objeto generado
+## guardando los datos intermedios
+save(fish_taxa,
+     file = "data_intermediate/taxa_attributes/fish_taxa.rda")
+
+# clean up intermediate objects
+rm(dat,
+  tax.data,
+  tax.info,
+  taxa_gen,
+  ttax.data)
+# ,
+#   wormsids_spp) 
+
+```
+
+```{r cuadro6 base taxonomia, echo = FALSE}
+abundance_and_func_traits <- readRDS("data_intermediate/fish/fishes_costa_rica_correct_size_abundance.rds")
+
+# llamando base de taxonomia y arreglos de formato
+load("data_intermediate/taxa_attributes/fish_taxa.rda")
+fish_taxa_uvc <- fish_taxa[fish_taxa$Species %in% abundance_and_func_traits$taxa, c( "Family",  "Genus", "Species")]
+
+fish_taxa_uvc <- fish_taxa_uvc[order(fish_taxa_uvc$Family),]
+fish_taxa_uvc <- fish_taxa_uvc[!fish_taxa_uvc$Family %>% is.na(),]
+fish_taxa_uvc <- fish_taxa_uvc[!fish_taxa_uvc$Species %>% is.na(),]
+rownames(fish_taxa_uvc) <- 1:nrow(fish_taxa_uvc)
+
+# fish_taxa_kable <-
+  knitr::kable(fish_taxa_uvc,
+               caption = "Table 1. Species of fishes found in Costa Rica and their taxonomic organization",
+               align = c('c', 'c', 'l'),
+               row.names = TRUE,
+               escape = FALSE, 
+               booktabs = TRUE, 
+               format.args = list(big.mark = ","))  %>%
+    kableExtra::kable_styling(bootstrap_options = "condensed",
+                              font_size = 12,
+                              full_width = FALSE) %>%
+    kableExtra::row_spec(1:25, color = "black") %>%
+    # kable_paper() %>%
+    kableExtra::save_kable("results/taxa/fish_taxa_kable.png")
+
+
+rm(fish_taxa_uvc)
+
+```
+
+&nbsp;
+
+&nbsp;
+
+
+## Sitios
+
+Para la creación de la base unificada de sitios se unieron los datos de coordenadas de Costa Rica. La base resultante se vinculó con la base de datos de censos de peces a partir del identificador único de cada sitio que se encuentra en ambas bases de datos.  
+ 
+&nbsp;
+
+### Creación de base de sitios
+
+**Autor de los datos:** Juan José Alvarado  
+**Bases de datos usadas:**   
+&emsp; General:          2019-10-10_ArrecifesPacifico.xlsx  
+&emsp; Islas Murciélago: COORDENADAS.xlsx  
+&emsp; Bahía Culebra:    sites_coordenates.costa_rica.xlsx  
+
+Regionales:  
+&emsp; fishes_sites.andrea.rda            (Proveedor: Franz Smith)  
+&emsp; MetaData.xlsx                      (Proveedor: Juan Pablo Quimbayo)  
+Localidades: fishes_sites_localities.xlsx (Autora: Andrea Arriaga-Madrigal con criterio de expertos)
+
+**Método:**  
+
+ 1. Se cargan los datos de sitios, se corrigen los nombres (i.e. minúscula, sin caracteres diacríticos) y se verifica su coincidencia con la respectiva base de datos de ucv  
+     1.  Se estandariza el formato de las coordenadas a grados decimales y se les agrega la respectiva región
+ 1. Se unifican los sitios a la base de censos una por una, para ver los sitios con coordenadas faltantes  
+ 1. Se hacen todas las longitudes negativas  
+ 1. Se agregan las localidades generadas manualmente fishes_sites_localities.xlsx  
+ 1. Se guarda los datos intermedios 
+
+
+```{r sites_Costa Rica, echo = FALSE, message = FALSE, warning = FALSE}
+
+# cargando sitios de uvc
+fishes_costa_rica_correct_size_abundance <- readRDS("data_intermediate/fish/fishes_costa_rica_correct_size_abundance.rds")
+
+## seleccionando variables de interés
+sites_uvc_cr <- fishes_costa_rica_correct_size_abundance[, "site_id", drop = FALSE] %>% unique
+
+rm(fishes_costa_rica_correct_size_abundance)
+
+# 1. cargando los datos de sitios, corrigiendo nombres y verificando coincidencias con su respectiva base de uvc
+
+###########################################---------MURCIELAGO--------###################################################
+sites_murcielago <- read_excel("data_raw/sites/COORDENADAS.xlsx")
+
+## seleccionando columnas de interés
+# separando las coordenadas en latitud y longitud
+sites_murcielago %<>%
+  separate(Coordenadas,
+         into = c("lat", "long"),
+         sep    = "-")
+
+sites_murcielago %<>%
+  dplyr::select(sites = Sitio,
+                lat,
+                long,
+                locality = Localidad)
+
+
+## corrigiendo nombres de sitios y localidades
+## cambiando los nombres a minuscula
+sites_murcielago$sites %<>% str_to_lower()
+sites_murcielago$locality %<>% str_to_lower()
+
+## cambiando caracteres diacriticos
+unwanted_array = list('á'='a', 'é'='e', 'í'='i', 'ó'='o', 'ú'='u', 'ñ'='n')
+
+# sites
+for(i in seq_along(unwanted_array)){
+  sites_murcielago$sites <- gsub(names(unwanted_array)[i],unwanted_array[i], sites_murcielago$sites)
+}
+# localities
+for(i in seq_along(unwanted_array)){
+  sites_murcielago$locality <- gsub(names(unwanted_array)[i],unwanted_array[i], sites_murcielago$locality)
+}
+
+## agregando guion bajo
+sites_murcielago$sites <- gsub(pattern = " ", replacement = "_", sites_murcielago$sites)
+sites_murcielago$locality <- gsub(pattern = " ", replacement = "_", sites_murcielago$locality)
+
+## corrigiendo formato de las coordenadas
+
+## definiendo la funcion
+dg2dec <- function(varb, Dg=NA, Min=NA, Sec=NA, SW.Hemisphere="S|W") {
+  
+  DMS <- sapply(strsplit(varb, paste0('[', Dg, Min, Sec, ']')), as.numeric)
+  
+  decdg <- abs(DMS[1, ]) + DMS[2, ]/60 + ifelse(dim(DMS)[1] > 2  & !is.na(Sec), DMS[3, ]/3600, 0)
+  
+  SW <- grepl(pattern = SW.Hemisphere, x = varb, ignore.case = TRUE)
+  return(ifelse(SW, -1, 1) * decdg)
+}
+
+## arreglando latitud
+lat <- c()
+for (i in sites_murcielago$lat){
+  lat[i] <- dg2dec(i, Dg='°', Min="'", Sec='\\\\" N')
+} 
+
+lat %<>% as.data.frame()
+names(lat)[1] <- "lat"
+
+## arreglando longitud
+long <- c()
+for (i in sites_murcielago$long){
+  long[i] <- dg2dec(i, Dg='°', Min="'", Sec='\\\\"W')
+} 
+
+long %<>% as.data.frame()
+names(long)[1] <- "long"
+
+## uniendo las nuevas coordenadas en una base de datos
+sites_murcielago1 <- cbind(lat, long, sites_murcielago$sites) ## agregar localidad
+names(sites_murcielago1)[grep("sites", names(sites_murcielago1))] <- "sites"
+sites_murcielago1$locality <- sites_murcielago$locality
+
+sites_murcielago <- sites_murcielago1
+rm(sites_murcielago1)
+sites_murcielago$region <- "costa_rica"
+
+# creando identificador unico para cada sitio
+sites_murcielago$site_id <-  paste(sites_murcielago$region, sites_murcielago$sites, sep = "-")
+sites_murcielago$region_site <-  paste(sites_murcielago$region, sites_murcielago$sites, sep = "-")
+
+# ## guardando el documento. Falta definirlo como un pobejo espacial para poder visualizarlo!!
+# write.table(sites_murcielago, "data_intermediate/sites/costa_rica/sites_murcielago.csv",  sep = ";", dec=",")
+# write.xlsx(sites_uvc_murcielago, "data_intermediate/sites/costa_rica/sites_uvc_murcielago.xlsx")
+# rgdal::writeOGR(sites_uvc_murcielago, ".", "data_intermediate/sites/costa_rica/sites_uvc_murcielago.xlsx", driver="ESRI Shapefile")
+
+###########################################---------JUANCA--------#####################################################
+## cargando la base de datos de sites del laboratorio (solo datos de CR)
+sites_juanca <- read_excel("data_raw/sites/2019-10-10_ArrecifesPacifico.xlsx")
+
+### cambiando los nombres para que coincidan
+sites_juanca %<>% dplyr::select("region"   = Region,
+                                "locality" = Localidad,
+                                "sites"    = Sitio,
+                                "lat"      = Latitud,
+                                "long"     = Longitud)
+
+### cambiando los nombres de sitio, localidad y region a minuscula
+sites_juanca$sites %<>% str_to_lower()
+sites_juanca$locality %<>% str_to_lower()
+sites_juanca$region <- "costa_rica"
+
+## quitando sitios sin coordenadas
+sites_juanca <- sites_juanca[-c(which(is.na(sites_juanca$lat) == TRUE)),]
+
+### cambiando caracteres diacriticos
+unwanted_array = list('á'='a', 'é'='e', 'í'='i', 'ó'='o', 'ú'='u', 'ñ'='n')
+
+for(i in seq_along(unwanted_array)){
+  sites_juanca$sites <- gsub(names(unwanted_array)[i],unwanted_array[i], sites_juanca$sites)
+}
+
+## agregando guion bajo
+sites_juanca$sites <- gsub(pattern = " ", replacement = "_", sites_juanca$sites)
+sites_juanca$locality <- gsub(pattern = " ", replacement = "_", sites_juanca$locality)
+
+# cambiando nombre de localidad para que calce con base de censos
+sites_juanca$locality <- gsub(pattern = "punta_gorda", replacement = "bahia_culebra", sites_juanca$locality)
+
+sites_juanca$locality <- gsub(pattern = "peninsula_de_osa", replacement = "osa", sites_juanca$locality)
+
+# creando identificador unico para cada sitio
+sites_juanca$site_id <-  paste(sites_juanca$region, sites_juanca$sites, sep = "-")
+sites_juanca$region_site <-  paste(sites_juanca$region,  sites_juanca$sites, sep = "-")
+
+# objeto con region_site dplicadas 
+dup1 <- sites_juanca[duplicated(sites_juanca$region_site),]
+
+sites_juanca_fix <- sites_juanca[sites_juanca$region_site %in% dup1$region_site,]
+
+# arreglando el site_id
+sites_juanca_fix$site_id <- paste(sites_juanca_fix$region, sites_juanca_fix$locality, sites_juanca_fix$sites, sep = "-")
+
+sites_juanca <- sites_juanca[!sites_juanca$region_site %in% sites_juanca_fix$region_site, ] %>% 
+  rbind(sites_juanca_fix)
+
+###########################################---------CULEBRA--------####################################################
+## cargando la base de datos de sites de Culebra
+sites_culebra <- read_excel("data_raw/sites/sites_coordenates.costa_rica.xlsx")
+
+### cambiando los nombres para que coincidan
+sites_culebra %<>% 
+  dplyr::select("locality" = Locality,
+                "sites"    = Site,
+                "lat"      = Lat,
+                "long")
+
+sites_culebra$region <- "costa_rica"
+
+### cambiando los nombres de sitio, localidad y region a minuscula
+sites_culebra$sites %<>% str_to_lower()
+sites_culebra$locality %<>% str_to_lower()
+# sites_culebra$long %<>% as.character() # provisional por mientras arreglo coordenadas
+# sites_culebra$lat %<>% as.character() # provisional por mientras arreglo coordenadas
+
+# arreglando north y west a las coordenadas
+sites_culebra$lat[c(1:9)] <- paste0(sites_culebra$lat[c(1:9)], "0\"N")
+sites_culebra$lat[12] <- paste0(sites_culebra$lat[12], "\"N")
+sites_culebra$lat <- gsub(pattern = " ", replacement = "", sites_culebra$lat)
+
+sites_culebra$long[c(1:9)] <- paste0(sites_culebra$long[c(1:9)], "0\"W")
+sites_culebra$long[12] <- paste0(sites_culebra$long[12], "\"W")
+sites_culebra$long <- gsub(pattern = "O", replacement = "W", sites_culebra$long)
+sites_culebra$long[c(10, 11, 13, 14, 15, 16)] <- paste0(sites_culebra$long[c(10, 11, 13, 14, 15, 16)], "W")
+
+## arreglando latitud
+  lat <- c()
+for (i in sites_culebra$lat){
+  lat[i] <- dg2dec(i, Dg='°', Min="'", Sec='\\\\" N')
+} 
+
+lat %<>% as.data.frame()
+names(lat)[1] <- "lat"
+
+## arreglando longitud
+long <- c()
+for (i in sites_culebra$long){
+  long[i] <- dg2dec(i, Dg='°', Min="'", Sec='\\\\"W')
+} 
+
+long %<>% as.data.frame()
+names(long)[1] <- "long"
+
+### cambiando caracteres diacriticos
+unwanted_array = list('á'='a', 'é'='e', 'í'='i', 'ó'='o', 'ú'='u', 'ñ'='n')
+
+for(i in seq_along(unwanted_array)){
+  sites_culebra$sites <- gsub(names(unwanted_array)[i],unwanted_array[i], sites_culebra$sites)
+}
+
+## agregando guion bajo
+sites_culebra$sites <- gsub(pattern = " ", replacement = "_", sites_culebra$sites)
+sites_culebra$locality <- gsub(pattern = " ", replacement = "_", sites_culebra$locality)
+
+sites_culebra$locality <- gsub(pattern = "punta_gorda", replacement = "bahia_culebra", sites_culebra$locality)
+
+sites_culebra$sites <- gsub(pattern = "guiri-guiri", replacement = "guiri_guiri", sites_culebra$sites)
+sites_culebra$sites <- gsub(pattern = "	viradores_", replacement = "guiri_guiri", sites_culebra$sites)
+sites_culebra$sites <- gsub(pattern = "	viradores", replacement = "guiri_guiri", sites_culebra$sites)
+
+# creando identificador unico para cada sitio
+sites_culebra$site_id <-  paste(sites_culebra$region, sites_culebra$sites, sep = "-")
+sites_culebra$region_site <-  paste(sites_culebra$region,  sites_culebra$sites, sep = "-")
+
+
+###########################################-----Unificacion-----#####################################################
+#  2. unificando los sitios a la base de censos una por una, para ver los sitios con coordenadas faltantes
+# verificando coincidencias
+sites_uvc_murcielago <- sites_uvc_cr %>%
+  left_join(sites_murcielago)
+
+sites_uvc_murcielago_nocoord <- sites_uvc_murcielago[which(is.na(sites_uvc_murcielago$lat) == TRUE), ]
+
+# 3. se unen todas las coordenadas en una misma base de datos
+sites_crlab <- sites_murcielago %>%
+  bind_rows(sites_juanca)
+
+sites_crlab <- sites_crlab[!duplicated(sites_crlab$site_id), ]
+
+## agregando identificador unico para cada sitio
+sites_crlab$region_site <- paste(sites_crlab$region, sites_crlab$sites, sep = "-")
+
+## seleccionando columnas de interes
+sites_crlab <- sites_crlab[, c("lat", "long", "locality", "region_site", "site_id")]
+
+# 4. guardando el archivo en formato .rda
+## guardando el archivo
+saveRDS(sites_crlab,
+     file = "data_intermediate/sites/sites_crlab.rds")
+
+# clean up intermediate objects
+rm(unwanted_array,
+   sites_juanca,
+   sites_juanca_fix,
+   sites_culebra,
+   sites_uvc_cr,
+   sites_murcielago,
+   sites_uvc_murcielago,
+   sites_uvc_murcielago_nocoord,
+   dg2dec,
+   i,
+   lat,
+   long)
+
+```
+
+```{r sites_f y sites_metadata, echo = FALSE, message = FALSE, warning = FALSE}
+# 2. cargando todas las bases de datos de sitios y corrigiendo los nombres (i.e. minusculas, sin signos diacriticos y sin nombres mal escritos)
+
+#############################################--------sites_FRANZ---------##################################################
+## cargando la base de sites con las coordenadas (provista por Franz)
+load("data_raw/sites/fishes_sites.andrea.rda")
+
+### cambiando los nombres para que coincidan
+sites_f <- fishes_sites.andrea[, -1]
+rm(fishes_sites.andrea)
+sites_f %<>% dplyr::select("sites" = Sitio,
+                           "long"  = Longitud,
+                           "lat"   = Latitud)
+
+### cambiando los nombres de sitio a minuscula
+sites_f$sites %<>% str_to_lower()
+# sites_f$long %<>% as.character() # provisional por mientras arreglo coordenadas
+# sites_f$lat %<>% as.character() # provisional por mientras arreglo coordenadas
+
+### cambiando caracteres diacriticos
+unwanted_array = list('á'='a', 'é'='e', 'í'='i', 'ó'='o', 'ú'='u', 'ñ'='n')
+
+for(i in seq_along(unwanted_array))({
+  sites_f$sites <- gsub(names(unwanted_array)[i],unwanted_array[i], sites_f$sites)
+})
+
+## agregando guion bajo
+sites_f$sites <- gsub(pattern = " ", replacement = "_", sites_f$sites)
+
+# agregandoles la region
+sites_f$region <- NA
+
+sites_f$region[sites_f$lat >= 15.68722]  <- "mexico" 
+sites_f$region[sites_f$lat >= 11.06447 & sites_f$lat <= 12.47578]  <- "nicaragua" 
+sites_f$region[sites_f$lat >= 5.436698 & sites_f$lat <=  5.650014 & sites_f$long <= -86.976293]  <- "costa_rica" # coco
+sites_f$region[sites_f$lat >= 8.028344 & sites_f$lat <= 11.04865 & sites_f$long <= -82.897413]  <- "costa_rica" 
+sites_f$region[sites_f$lat >= 7.103914 & sites_f$lat <= 9.025267 & sites_f$long >= -82.904214]  <- "panama" 
+sites_f$region[sites_f$lat >=  1.477157 & sites_f$lat <= 7.226235 & sites_f$long >= -86.976293]  <- "colombia"
+sites_f$region[sites_f$lat >= -3.390584 & sites_f$lat <= 1.477157] <- "ecuador" 
+sites_f$region[sites_f$lat >=  -1.691239 & sites_f$lat <= 1.680950 & sites_f$long <=-87.226897] <- "galapagos"
+sites_f$region[sites_f$lat <= -18.357159] <- "chile"
+
+## agregando identificador unico para cada sitio
+sites_f$site_id <- paste(sites_f$region, sites_f$sites, sep = "-")
+
+sites_f$region_site <- paste(sites_f$region, sites_f$sites, sep = "-")
+
+## eliminando sitio con el mismo nombre en distinta region que crean conflictos
+# sites_f <- sites_f[!duplicated(sites_f$region_site), ]
+
+# modificando roca_partida para que tenga la localidad correcta
+sites_f$site_id <- gsub("mexico-roca_partida", "mexico-revillagigedo-roca_partida", sites_f$site_id)
+
+sites_f$site_id <- gsub("costa_rica-san_pedrillo", "costa_rica-murcielago-san_pedrillo", sites_f$site_id)
+
+
+## Eliminando sitios en mx que difieren en ubicacion de otros con el mismo nombre en base de mx
+# sites_incorrect_mx <-
+#   c("los_nidos",
+#     "punta_lobos")
+# 
+# sites_f <- sites_f[!sites_f$sites %in% sites_incorrect_mx, ]
+
+## seleccionando las columnas de interes
+sites_f <- sites_f[, c("site_id", "lat", "long", "region_site")]
+
+#############################################--------sites_METADATA---------###################################################
+## cargando la base de Quimbayo MetaData
+sites_metadata <- read_excel("data_raw/sites/MetaData.xlsx")
+
+### cambiando los nombres para que coincidan
+sites_metadata %<>% dplyr::select("region"   = Country,
+                                  "locality" = Locality,
+                                  "sites"    = Sites,
+                                  "lat"      = Lat,
+                                  "long"     = Long)
+
+### cambiando los nombres de sitio a minuscula
+sites_metadata$sites %<>% str_to_lower()
+sites_metadata$locality %<>% str_to_lower()
+
+### cambiando nombres mal escritos
+sites_metadata$locality <- gsub("islas_murielago", "islas_murcielago", sites_metadata$locality)
+sites_metadata$locality <- gsub("cabo_pulmon", "cabo_pulmo", sites_metadata$locality)
+
+sites_metadata$locality <- gsub("isla_cerralvo",  "isla_ceralvo", sites_metadata$locality)
+sites_metadata$locality <- gsub("revillagigedo_roca_partida", "revillagigedo", sites_metadata$locality)
+
+# sites_metadata$sites <- sites_metadata$sites %>% replace(sites_metadata$sites == "^el_bajo_seco_sur$", "bajo_seco_sur")
+
+## Eliminando sitios que tienen mal las coordenadas y caen en tierra, para usar las de franz
+sites_land <-
+{  c(
+  # "la_lobera",
+  # "los_nidos",
+  # "punta_lobos",
+  # "bajo_del_tigre",
+  # "roca_partida",
+    "chicarias_afuera",
+    "majagual",
+    "nacascolo",
+    "paloma_norte",
+    "paloma_sur",
+    "punta_la_flor",
+    "punta_clavo",
+    "bajo_del_tigre", 
+    "isla_pelada",
+    "la_anciana",
+    "el_toro",
+    "pena_rota",
+    "marsella",
+    "guacalito",
+    "palmitas",
+    "guiri_guiri",
+    "matapalo",
+    "esmeralda",
+    "pelonas",
+    "jicaral",
+    "bajo_los_castillo",
+    "punta_el_indio",
+    "punta_carrillo",
+    "el_muneco",
+    "tiburon",
+    "el_cirial",
+    "el_reloj",
+    # "punta_demonio",
+    "sueno_del_pescador",
+    "montana_rusa",
+    "brincanco",
+    "uva",
+    "canales_de_tierra",
+    "mali_mali",
+    "iglesias",
+    # "machete",
+    "machete_punta",
+    "wahoo",
+    # "buffete",
+    "bajo_del_pulpo",
+    "faro",
+    "don_juan",
+    "granito_de_oro",
+    "dos_tetas",
+    "tintorera",
+    "catedral",
+    # "islote_santa_cruz",
+    "san_marin",
+    "cativo",
+    "cimarrones",
+    "puerto_escondido",
+    # "la_botella",
+    "champion",
+    "la_guina",      # mismas coordenadas que roca_patida y generan conflicto
+    "la_piramide",   # mismas coordenadas que roca_patida y generan conflicto
+    "punta_chivato", # mismas coordenadas que roca_patida y generan conflicto
+    "la_bufadora",   # mismas coordenadas que roca_patida y generan conflicto
+    "resumidero")}   # mismas coordenadas que roca_patida y generan conflicto
+
+sites_metadata <- sites_metadata[!sites_metadata$sites %in% sites_land, ]
+
+## quitando sitios sin lat
+sites_metadata <- sites_metadata[!sites_metadata$lat %>% is.na, ]
+
+## creando identificador unico para cada sitio
+sites_metadata$site_id <-  paste(sites_metadata$region, sites_metadata$sites, sep = "-")
+
+sites_metadata$region_site <-  paste(sites_metadata$region, sites_metadata$sites, sep = "-")
+
+# creando identificador unico para los sitios duplicados en region_site
+# eliminando duplicados de coordenadas
+sites_metadata1 <- sites_metadata[!duplicated(sites_metadata[, c("lat", "long")]), ]
+
+## buscando duplicados
+dup1 <- sites_metadata1[duplicated(sites_metadata1$region_site),]
+
+sites_metadata1_fix <- sites_metadata1[sites_metadata1$region_site %in% dup1$region_site,]
+
+# arreglando el site_id
+sites_metadata1_fix$site_id <- paste(sites_metadata1_fix$region, sites_metadata1_fix$locality, sites_metadata1_fix$sites, sep = "-")
+
+sites_metadata <- sites_metadata[!sites_metadata$region_site %in% sites_metadata1_fix$region_site, ] %>% 
+  rbind(sites_metadata1_fix)
+
+## seleccionando las columnas de interes
+sites_metadata <- sites_metadata[, c("site_id", "lat", "long", "locality", "region_site")]
+
+# eliminando roca partida por site_id
+sites_metadata <- sites_metadata[!sites_metadata$site_id == "mexico-revillagigedo-roca_partida",]
+#############################################--------sites_COSTA_RICA--------###################################################
+## cargando la base de sites con las coordenadas de costa rica
+sites_crlab <- readRDS("data_intermediate/sites/sites_crlab.rds")
+
+# seleccionando las filas de cr de cada base de datos
+sites_f <- sites_f[grep("costa_rica", sites_f$region_site),]
+sites_f$dataset_sites <- "franz"
+sites_f$locality <- NA
+
+sites_metadata <- sites_metadata[grep("costa_rica", sites_metadata$region_site),]
+sites_metadata$dataset_sites <- "metadata"
+
+sites_crlab$dataset_sites <- "lab"
+sites_cr <- rbind(sites_f, sites_metadata, sites_crlab)
+```
+
+```{r eliminando duplicados sitios, eval = FALSE, echo = FALSE, message = FALSE, warning = FALSE}
+# evaluando los duplicados de site_id
+sites_cr_dup <- sites_cr$site_id[duplicated(sites_cr$site_id)]
+sites_cr_dup <- sites_cr[sites_cr$site_id %in% sites_cr_dup, ]
+
+sites_cr_dup$remove <- NA
+
+# quitando los que vienen de la base metadata
+sites_cr_dup$remove[grep("metadata", sites_cr_dup$dataset_sites)] <- "remove" 
+
+sites_cr <- sites_cr %>% left_join(sites_cr_dup)
+sites_cr <- sites_cr[sites_cr$remove %>% is.na(), ]
+sites_cr$remove <- NULL
+
+#
+sites_cr_dup <- sites_cr$site_id[duplicated(sites_cr$site_id)]
+sites_cr_dup <- sites_cr[sites_cr$site_id %in% sites_cr_dup, ]
+
+sites_cr_dup$remove <- NA
+sites_cr_dup$remove[grep("franz", sites_cr_dup$dataset_sites)] <- "remove" # quitando los que vienen de la base metadata
+
+sites_cr <- sites_cr %>% left_join(sites_cr_dup)
+sites_cr <- sites_cr[sites_cr$remove %>% is.na(), ]
+
+  
+```
+
+```{r Unificacion, echo = FALSE, message = FALSE, warning = FALSE}
+
+# 1. call for uvc data 
+fishes_costa_rica_correct_size_abundance <- readRDS("data_intermediate/fish/fishes_costa_rica_correct_size_abundance.rds")
+
+sites_uvc <- fishes_costa_rica_correct_size_abundance[!duplicated(fishes_costa_rica_correct_size_abundance$site_id), c("region_site", "site_id", "locality", "dataset"), drop = FALSE] %>% as.data.frame()
+
+#############################################-------- Unificacion
+## 3. vinculando las bases sitios a la base de censos una por una, para ver los sitios con coordenadas faltantes
+## se agregan las coordenadas de mexico. Quitando localidad
+sites_uvc_cr <- sites_uvc %>%
+  left_join(sites_cr[, c("lat", "long", "site_id", "dataset_sites")]) #
+
+### se separan los sitios con coordenadas de aquellos que no encontraron coincidencias
+sites_uvc_coord_cr <- sites_uvc_cr[-c(which(is.na(sites_uvc_cr$long))), ]
+sites_uvc_nocoord <- sites_uvc_cr[which(is.na(sites_uvc_cr$long)), c("region_site", "site_id", "dataset_sites", "dataset"), drop = FALSE] %>% as.data.frame()
+
+# 5. haciendo todas las longitudes negativas
+sites_cr$long <- sites_cr$long %>% abs
+sites_cr$long <- sites_cr$long *-1
+
+# eliminando duplicados de coordenadas
+# sites_cr <- sites_cr[!duplicated(sites_cr[, c("lat", "long")]),]
+
+# arreglando las localidades
+# sites_cr$locality <- do.call('rbind', strsplit(sites_cr$site_id, '-', fixed=TRUE))[,2]
+
+# clean up other intermediate objects
+# rm()
+
+```
+
+```{r Unificacion_continuacion, echo = FALSE, message = FALSE, warning = FALSE}
+#############################################--------localidades-----#####################################################
+# 6. agregando las localidades del excel fishes_sites_localities.xlsx
+## eliminando las localidades para que no haya conflicto con las localidades actualizadas
+# sites_cr1 <- sites_cr[, c("region_site", "site_id", "lat", "long")] 
+sites_cr <- readRDS("data_intermediate/sites/sites_cr.rds")
+
+## Agregando las localidades a los sitios
+localities <- read_excel("data_intermediate/sites/fishes_sites_localities.xlsx")
+localities$region_site <- paste(localities$region, localities$sites, sep = "-")
+
+localities$site_id <- paste(localities$region, localities$sites, sep = "-")
+
+# generando identificador unico para los sitios repetidos en region_site# objeto con region_site dplicadas 
+dup1 <- localities[duplicated(localities$region_site),]
+localities_fix <- localities[localities$region_site %in% dup1$region_site,]
+
+# arreglando el site_id
+localities_fix$site_id <- paste(localities_fix$region, localities_fix$locality, localities_fix$sites, sep = "-")
+
+localities <- localities[!localities$region_site %in% localities_fix$region_site, ] %>% 
+  rbind(localities_fix)
+
+## seleccionando las columnas de interes
+localities <- localities[, c("locality", "region_site", "site_id")]
+# , "lat", "long"
+sites_cr <- sites_cr[, c("region_site", "site_id", "lat", "long", "locality")] %>%
+  left_join(localities[, c("locality", "site_id")], by = "site_id")
+            # by = c("lat", "long"))
+
+# names(sites_cr)[grep("site_id", names(sites_cr))] <- c("site_id_uvc", "site_id_loc")
+names(sites_cr)[grep("locality", names(sites_cr))] <- c("locality_uvc", "locality_loc")
+
+# corrigiendo localidad
+sites_cr$locality <- sites_cr$locality_uvc
+
+# corrigiendo localidades NA en localidades_loc
+sites_cr$locality[!sites_cr$locality_loc %>% is.na] <- sites_cr$locality_loc[!sites_cr$locality_loc %>% is.na]
+
+# quitando los duplicados en coordenadas que tienen unknown
+# sites_cr <- sites_cr[!duplicated(sites_cr[, c("lat", "long")]) & -c(grep("unknown", sites_cr$locality_loc)), ]
+
+# el site_id va a ser region_site para los que no sean duplicados
+sites_cr$site_id <- sites_cr$region_site
+
+# separando los sitios que son duplicados en region_site para generar un site_id diferente
+dup <- sites_cr$region_site[sites_cr$region_site %>% duplicated()]
+
+# nuevo objeto que tiene los sitios con region_site repetido
+sites_cr_fix <- sites_cr[sites_cr$region_site %in% dup, ]
+
+# corrigiendo el site_id se esos region_sitie duplicados
+sites_cr_fix$site_id <- paste(do.call('rbind', strsplit(sites_cr_fix$region_site, '-', fixed=TRUE))[,1], sites_cr_fix$locality_uvc, do.call('rbind', strsplit(sites_cr_fix$region_site, '-', fixed=TRUE))[,2], sep = "-")
+
+# sites_cr_fix$site_id[sites_cr_fix$locality_loc %>% is.na()] <- sites_cr_fix$site_id_fix[sites_cr_fix$locality_loc %>% is.na()]
+
+# fishes sites que no tienen region_site repetido
+sites_cr <- sites_cr[!sites_cr$region_site %in% dup, ]
+
+# uniendo todos los sitios en sites_cr
+sites_cr <- sites_cr[, c("region_site", "lat", "long", "locality", "site_id")] %>% rbind(sites_cr_fix[, c("region_site", "lat", "long", "locality", "site_id")])
+
+# 7.  se eliminan los sitios duplicados
+## eliminando filas que se repitan en sitio y localidad
+sites_cr$site_loc <- paste(sites_cr$region_site, sites_cr$locality, sep = "-")
+
+sites_l <- pblapply(unique(sites_cr$site_loc), function(x){
+  
+  Y <- sites_cr[sites_cr$site_loc == x, ]
+  Y <- Y[!duplicated(Y[, c("lat", "long")]), ]
+  if (nrow(Y) > 1)
+    Y <- Y[!is.na(Y$lat), ]
+  return(Y)
+})
+
+sites_cr <- do.call(rbind, sites_l)
+sites_cr$site_loc <- NULL
+
+# ## evaluando duplicados de nombres con las mismas coordenadas
+# sites_cr$sites[which(duplicated(sites_cr[, c("lat", "long")]))]
+
+# sites_cr <- sites_cr[!duplicated(sites_cr[, c("lat", "long")]), ]
+
+## cambiando los NA en localidad por "unknown" para leerlo en qgis
+sites_cr[which(is.na(sites_cr$locality)), "locality"] <- "unknown"
+
+## arreglando algunas coordenadas a partir de documento modificado en QGis
+sites_onlynew_qgis <- readRDS("data_intermediate/sites/sites_onlynew_qgis.rds") # tiene solamente las filas que cambie en QGIS
+
+sites_onlynew_qgis$lat %<>% as.numeric()
+sites_onlynew_qgis$long %<>% as.numeric()
+
+# corrigiendo site_id para que coincida
+sites_onlynew_qgis$site_id <- sites_onlynew_qgis$region_site
+
+# eliminando duplicados de coordenadas
+sites_onlynew_qgis <- sites_onlynew_qgis[!duplicated(sites_onlynew_qgis$site_id),]
+
+## Agregando las localidades a los sitios
+sites_onlynew_qgis %<>%
+  left_join(localities[, c("site_id", "locality")])
+
+## removiendo sitios a corregir
+sites_cr1 <- sites_cr[!sites_cr$site_id %in% sites_onlynew_qgis$site_id, c("long", "lat", "region_site", "site_id", "locality")] %>% rbind(sites_onlynew_qgis[, c("long", "lat", "region_site",  "site_id", "locality")])
+
+sites_cr <- sites_cr1 %>% left_join(sites_cr[, c("long", "lat")])
+
+if(any(sites_cr$lat %>% is.na)) {sites_cr <- sites_cr[!sites_cr$lat %>% is.na, ]}
+
+# correccion particular para que coincida con base de censos
+# sites_cr$site_id <- gsub("mexico-isla_san_pedro_nolasco-roca_partida", "mexico-roca_partida", sites_cr$site_id)
+
+# revisando que todos los sitios en base de censos esten en la base de peces
+# sites_uvc_coord <- sites_uvc %>% left_join(sites_cr[, c("lat", "long", "locality", "site_id")], by = c("site_id"))
+
+# quitando sitios de otros paises de a region
+sites_cr <- sites_cr[grep("costa_rica", sites_cr$region_site), ] %>% unique
+
+# 8. guardando el archivo en formato .rda, .xlsx y .kml
+## guardando el archivo
+saveRDS(sites_cr,
+     file = "data_intermediate/sites/sites_cr.rds")
+
+# guardando en excel
+write.table(sites_cr, "data_intermediate/sites/sites_cr.csv",  sep = ";", dec=",")
+# xlsx::write.xlsx(sites_cr, "data_intermediate/sites/sites_cr.xlsx")
+
+# # modificando la base de datos como objeto espacial
+# coordinates(sites_cr) <- c("long", "lat")
+# proj4string(sites_cr) <- CRS("+init=epsg:4326")
+# rgdal::writeOGR(sites_cr, "data_intermediate/sites/sites_cr.shp", layer="sites_cr",  driver="ESRI Shapefile",overwrite_layer = TRUE) ## Antes de correrlo, borrar la version vieja del shp
+
+# preparando la base de datos para el mapa
+# 1. call for uvc data 
+fishes_costa_rica_correct_size_abundance <- readRDS("data_intermediate/fish/fishes_costa_rica_correct_size_abundance.rds")
+
+ID_transects_by_sites <-  aggregate(ID_transect ~ site_id , data = fishes_costa_rica_correct_size_abundance, FUN = function(x) length(unique(x))) 
+
+ID_transects_by_sites$ID_transect %<>% as.character()
+
+depths_by_sites <- aggregate(depth_m ~ site_id, data = fishes_costa_rica_correct_size_abundance, FUN = function(x) paste(as.character(sort(unique(x))), collapse = "; ")) 
+
+dates_by_sites <- fishes_costa_rica_correct_size_abundance %>%
+  group_by(site_id) %>% 
+  dplyr::summarise(date = paste(as.character(unique(date)), collapse = "; "))
+
+ fishes_sites_summary <- ID_transects_by_sites %>%
+   left_join(depths_by_sites[, c("site_id", "depth_m")]) %>%
+   left_join(dates_by_sites[, c("site_id", "date")]) %>%
+   left_join(sites_cr)
+
+# guardando el objeto como objeto espacial
+# quitando NAs
+# sites_cr <- sites_cr[-c(which(is.na(sites_cr$long))), ]
+ 
+# sites_cr %<>% as_Spatial()
+# coordinates(sites_cr) <- c("long", "lat")
+# proj4string(sites_cr) <- CRS("+proj=longlat +datum=WGS84")
+# rgdal::writeOGR(sites_cr, "data_intermediate/sites/sites_cr.kml", layer="sites_cr", driver="KML", overwrite_layer = TRUE) ## Antes de correrlo, borrar la version vieja del kml
+
+# sites_cr$site_id <- paste(sites_cr$region, sites_cr$sites, sep = "-")
+ 
+# clean up intermediate objects
+rm(
+   dup1,
+   # sites_cr,
+   # sites_f,
+   sites_l,
+   # sites_metadata,
+   sites_metadata1,
+   sites_metadata1_fix,
+   sites_mx,
+   sites_panama,
+   sites_uvc,
+  sites_cr1,
+   sites_uvc_coord_cr,
+   sites_uvc_coord_f,
+   sites_uvc_coord_galapagos,
+   sites_uvc_coord_metadata,
+   sites_uvc_coord_mx,
+   sites_uvc_cr,
+   sites_uvc_f,
+   sites_uvc_galapagos,
+   sites_uvc_metadata,
+   sites_uvc_mx,
+   sites_uvc_nocoord,
+   unwanted_array,
+   dg2dec,
+   file.name,
+   i,
+   intermediate_locale,
+   raw_locale,
+   save_locale,
+   sites_galapagos,
+   sites_nicaragua,
+   sites_uvc_coord_nicaragua,
+   sites_uvc_coord_panama,
+   sites_uvc_nicaragua,
+   sites_uvc_panama,
+   localities,
+   depths_by_sites,
+   dates_by_sites,
+   ID_transects_by_sites,
+  dup,
+  sites_cr_fix,
+  sites_land,
+  sites_onlynew_qgis,
+  sites_uvc_coord)
+
+# clean up core objects
+# rm(sites_cr)
+
+```
+
+```{r uvc and sites confirmation, eval = FALSE, echo = FALSE, message = FALSE, warning = FALSE}
+fishes_costa_rica_correct_size_abundance_confirm <- fishes_costa_rica_correct_size_abundance[, c("abundance", "sites", "depth_m", "taxa", "size_cm", "ID_transect", "year", "month", "day", "date", "date_format", "area_uvc", "environment", "region", "loc_site", "dataset", "site_id", "region_site")] %>% left_join(sites_cr)
+fishes_costa_rica_correct_size_abundance_confirm$site_id[fishes_costa_rica_correct_size_abundance_confirm$lat %>% is.na] %>% unique
+
+```
+
+```{r sites_map setup, eval = FALSE, echo = FALSE, message = FALSE, warning = FALSE}
+fishes_sites$region <- sapply(fishes_sites$regn_st %>% as.character(), function(x) strsplit(x, "-")[[1]][1], USE.NAMES = FALSE)
+
+fishes_sites %<>% st_as_sf(coords = c("long", "lat"),
+            crs = 4326, remove = FALSE)
+
+# cargando el archivo con los polígonos de los paises 
+# world <- sf::st_as_sf(maps::map("world", plot = FALSE, fill = TRUE))
+
+# generando un objeto con la cantidad de sitios por region y la geolocalizacion 
+sites_per_locality <- aggregate(site_id ~ region + locality, FUN = function(x) length(unique(x)), data = abundance_and_func_traits)
+names(sites_per_locality)[grep("site_id", names(sites_per_locality))] <- "site_id_length_loc"
+
+sites_per_locality1 <- fishes_sites %>% left_join(sites_per_locality)
+# agregando en las regiones las islas oceanicas
+# sites_per_locality1$region[sites_per_locality1$locality == "revillagigedo"] <- "México - Revillagigedo"
+sites_per_locality1$region[sites_per_locality1$locality == "isla_del_coco"] <- "Costa Rica - Isla del Coco"
+# sites_per_locality1$region[sites_per_locality1$locality == "malpelo"] <- "Colombia - Malpelo"
+
+# agregando en las regiones las islas oceanicas
+# sites_per_locality$region[sites_per_locality$locality == "revillagigedo"] <- "México - Revillagigedo"
+sites_per_locality$region[sites_per_locality$locality == "isla_del_coco"] <- "Costa Rica - Isla del Coco"
+# sites_per_locality$region[sites_per_locality$locality == "malpelo"] <- "Colombia - Malpelo"
+
+# calculando la cantidad de sitios por region con las islas como regiones
+sites_per_region <- aggregate(site_id_length_loc ~ region, FUN = sum, data = sites_per_locality)
+
+names(sites_per_region)[grep("site_id", names(sites_per_region))] <- "site_id_length"
+
+# agregandole geometry
+sites_per_region <- sites_per_region %>% left_join(sites_per_locality1)
+
+sites_per_region <- sites_per_region[!duplicated(sites_per_region$region), ]  # esta dejando la primera coordenada, se puede mejorar a seleccionar el promedio
+
+# corrigiendo formato de nombre de regiones
+# sites_per_region$region[sites_per_region$region == "colombia"]   <- "Colombia"
+sites_per_region$region[sites_per_region$region == "costa_rica"] <- "Costa Rica"     
+# sites_per_region$region[sites_per_region$region == "ecuador"]    <- "Ecuador"
+# sites_per_region$region[sites_per_region$region == "france"]     <- "Clipperton"
+# sites_per_region$region[sites_per_region$region == "galapagos"]  <- "Ecuador - Galápagos"
+# sites_per_region$region[sites_per_region$region == "mexico"]     <- "México"
+# sites_per_region$region[sites_per_region$region == "nicaragua"]  <- "Nicaragua"
+# sites_per_region$region[sites_per_region$region == "panama"]     <- "Panamá"
+
+sites_per_region$region %<>% as.factor()
+
+```
+
+```{r sites_map, echo = FALSE, message = FALSE, warning = FALSE}
+# llamando los datos regionales con la ecorregion, los rasgos funcionales y biomasa
+abundance_and_func_traits <- readRDS("data_intermediate/fish/fishes_costa_rica_correct_size_abundance.rds")
+
+# cargando archivo con los sitios
+fishes_sites <- readOGR("data_intermediate/sites/sites_cr.shp")
+# names(fishes_sites)[grep("Ecoregn", names(fishes_sites))] <- "ecoregion"
+names(fishes_sites)[grep("localty", names(fishes_sites))] <- "locality"
+
+
+sites_cr <- readRDS("data_intermediate/sites/sites_cr.rds")
+
+# call to etp coastline
+etp_coastline <- read_sf("data_intermediate/sites/shapes/etp_coastline/etp_coastline.shp")
+
+etp_coastline_cropped <- etp_coastline %>% as_Spatial()
+etp_coastline_cropped <- raster::crop(etp_coastline_cropped, extent(fishes_sites) + 5)
+
+# fortify coastline for plotting
+etp_coastline_f.lat_long <-
+  etp_coastline %>%
+  as("Spatial") %>%
+  fortify() %>%
+  as_tibble()
+
+# create zoom to eliminate region edges
+etp_zoom <-
+  etp_coastline_cropped %>% 
+    extent()
+
+#  visualise
+sites_map <-
+  sites_cr %>%
+  ggplot() +
+  geom_path(aes(x     = long,
+                y     = lat,
+                group = group),
+            colour = "grey75",
+            size   = 0.5,
+            data   = etp_coastline_f.lat_long %>%
+              dplyr::filter(long  >= etp_zoom[1],
+                            long  <= etp_zoom[2],
+                            lat   >= etp_zoom[3],
+                            lat   <= etp_zoom[4])) +
+  coord_map(xlim = c(etp_zoom[1] + 1, etp_zoom[2] - 1),
+            ylim = c(etp_zoom[3] - 10, etp_zoom[4] - 1)) +
+  # geom_sf(data = world, colour = "snow1", fill = "grey75", size = 1, alpha = 0.3, 
+          # aes(fill = ID), show.legend = FALSE)  +
+  coord_sf(xlim = c(extent(fishes_sites)[1] - 0.5, extent(fishes_sites)[2] + 0.5),
+           ylim = c(extent(fishes_sites)[3] - 0.5, extent(fishes_sites)[4] + 0.5),
+           expand = FALSE) + 
+  geom_point(aes(long, lat, color = locality), show.legend = FALSE)  +
+    scale_color_viridis(discrete = TRUE, option = "D", end = 0.8) +
+  # ggrepel::geom_text_repel(aes(long, lat, label = paste0(region, " (", site_id_length , ")")) ,
+  #                 box.padding   = 0.5, 
+  #                 point.padding = 0.5,
+  #                 segment.size  = 0.2,
+  #                 segment.color = 'grey50',
+  #                 size = 5) + 
+    labs(caption = "Figure 1. Fish biomass monitoring sites") + 
+  theme(legend.position = "bottom",
+        # axis.text.y = element_text(size = 10),
+        text = element_text(size = 16),
+        plot.background = element_rect(fill = 'transparent', color=NA),
+        panel.background = element_rect(fill = 'transparent'),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(color = gray(0.5), linetype = "dashed", 
+        size = 0.05),
+        plot.caption.position =  "plot",
+        plot.caption = element_text(face = "plain", size = rel(1), hjust = 0, color = "black"))
+ 
+sites_map
+
+# guardando el mapa
+ggsave("figures/sites/sites_map.png",
+       plot = sites_map,
+       bg = "transparent",
+       width  = 12,
+       height = 8)
+
+rm(abundance_and_func_traits,
+   etp_coastline,
+   etp_coastline_cropped,
+   etp_coastline_f.lat_long,
+   etp_zoom,
+   fishes_sites,
+   gshhg_locale,
+   sites_per_locality,
+   sites_per_locality1,
+   # sites_per_region,
+   sites_map,
+   world) 
+
+
+```
+
+```{r create fishes_costa_rica_correct_size_abundance_area_stdr, echo = FALSE, message = FALSE, warning = FALSE}
+# llamando los datos de costa rica 
+fishes_costa_rica_correct_size_abundance <- readRDS("data_intermediate/fish/fishes_costa_rica_correct_size_abundance.rds")
+
+# agregando info del sitio (lat, long, site_id y region) a cada fila
+sites_cr <- readRDS("data_intermediate/sites/sites_cr.rds")
+fishes_costa_rica_correct_size_abundance_area_stdr <- fishes_costa_rica_correct_size_abundance[, c("ID_transect", "depth_m", "year", "month", "day", "date", "area_uvc", "environment", "taxa", "abundance", "size_cm",  "dataset", "sites", "site_id")] %>% left_join(sites_cr)
+
+# calculando abundancia * m2
+fishes_costa_rica_correct_size_abundance_area_stdr$abundance_area <- round(fishes_costa_rica_correct_size_abundance_area_stdr$abundance / fishes_costa_rica_correct_size_abundance_area_stdr$area_uvc, 2)
+
+# # calculando biomass * m2
+# abundance_and_func_traits_area_stdr$biomass_area <- round(abundance_and_func_traits_area_stdr$biomass * abundance_and_func_traits_area_stdr$abundance/ abundance_and_func_traits_area_stdr$area_uvc, 2)
+
+
+saveRDS(fishes_costa_rica_correct_size_abundance_area_stdr, "data_intermediate/fish/fishes_costa_rica_correct_size_abundance_area_stdr.rds")
+
+```
+
+
+&nbsp;
+
+#### Información de la sesión
+```{r session info, echo = FALSE, warning = FALSE, message = FALSE}
+sessionInfo()
+```
+
+#### **Referencias**
