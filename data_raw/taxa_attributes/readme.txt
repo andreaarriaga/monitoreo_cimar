@@ -1,1 +1,0 @@
-should contain intermediate data products that have been partially groomed but aren't quite ready for the data/ folder; typically saved here because creating them was a difficult process and it makes sense to start from an intermediate product
