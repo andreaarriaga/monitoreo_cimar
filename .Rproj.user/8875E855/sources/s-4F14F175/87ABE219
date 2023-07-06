@@ -1,0 +1,27 @@
+{
+    "id": "87ABE219",
+    "path": "~/Dropbox/Andrea_Arriaga/monitoreo_cimar/creation_code.Rmd",
+    "project_path": "creation_code.Rmd",
+    "type": "r_markdown",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1652048345039.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "chunk_output_type": "console",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "1872,309",
+        "scrollLine": "1849"
+    },
+    "folds": "49|60|69|0|\n88|64|168|0|\n170|86|201|0|\n203|78|274|0|\n354|2|370|0|\n387|1|473|0|\n392|36|394|0|\n476|1|531|0|\n537|1|538|2|\n540|36|545|0|\n550|1|551|2|\n555|1|556|2|\n559|1|560|2|\n560|10|572|87|\n576|3|577|2|\n579|1|580|2|\n584|1|585|2|\n589|2|631|2|\n692|68|790|0|\n792|86|824|0|\n826|104|837|0|\n849|76|926|0|\n928|60|943|0|\n967|68|1036|0|\n1038|55|1046|0|\n1070|73|1285|0|\n1289|112|1306|0|\n1308|49|1341|0|\n1345|44|1378|0|\n1399|63|1516|0|\n1518|43|1548|0|\n1683|96|1693|0|\n1855|74|1864|0|\n1878|65|1885|0|\n1888|116|1893|0|\n",
+    "lastKnownWriteTime": 1654187126,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1654204814496,
+    "read_only": false,
+    "read_only_alternatives": []
+}
